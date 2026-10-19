@@ -47,7 +47,7 @@ We snapshot critical fields at order time (`order_items.name_snapshot`, `unit_pr
 
 ### Shard key: country
 
-The shard key is the **country code**: `eg`, `ksa`, ... — one Postgres cluster per country. The DB column is named `region` so the router stays generic if we ever sub-shard a country later, but in this milestone `region == country code`.
+The shard key is the **country code**: `eg`, `sa`, ... — one Postgres cluster per country. The DB column is named `region` so the router stays generic if we ever sub-shard a country later, but in this milestone `region == country code`.
 
 ### Resolution
 
@@ -74,7 +74,7 @@ Not introduced in this milestone. All reads and writes go to the primary per reg
 ### Cross-shard reads
 
 Forbidden in the hot path. The only handled case is:
-1. **System-admin global views** (e.g. all pending orders across countries) — fan-out at the controller level, sequential, with hard pagination per shard. With ~2 countries today (`eg`, `ksa`) this is cheap.
+1. **System-admin global views** (e.g. all pending orders across countries) — fan-out at the controller level, sequential, with hard pagination per shard. With ~2 countries today (`eg`, `sa`) this is cheap.
 
 ### Tables that ARE sharded
 

@@ -1,9 +1,9 @@
-import type {Knex} from "knex";
-import {env} from "../config/env";
+import type { Knex } from "knex";
+import { env } from "../config/env";
 
 /**
  * Builds a knex config for the region+cluster identified by env vars.
- *   REGION=eg|ksa|...   (required — no default so migrations can never silently hit the wrong shard)
+ *   REGION=eg|sa|...   (required — no default so migrations can never silently hit the wrong shard)
  *   CLUSTER=hot|archive (defaults to "hot")
  *
  * Drives `npm run migrate`, `migrate:rollback`, etc. The per-process shard
@@ -30,7 +30,7 @@ const config: Knex.Config = {
         password: shard.password,
         database: shard.name,
     },
-    pool: {min: 0, max: env.db.poolMax},
+    pool: { min: 0, max: env.db.poolMax },
     migrations: {
         directory: env.db.migrationDirectory,
         extension: env.db.migrationExtension,

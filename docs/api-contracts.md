@@ -12,7 +12,7 @@ All endpoints are mounted under `/api`. Authentication via JWT in cookie `access
 | --------------------- | ----------------------------------------- | ------------------------------------------ |
 | `Cookie: access_token` | All authenticated endpoints              | Issued by core-service `/api/auth/login`   |
 | `Idempotency-Key`     | All `POST` / `PATCH` write endpoints      | Strict on order create, payment init, payouts |
-| `X-Region`            | Required for every request (admin may pass `all` for fan-out reads) | `eg`, `ksa`, ... (one per country) |
+| `X-Region`            | Required for every request (admin may pass `all` for fan-out reads) | `eg`, `sa`, ... (one per country) |
 | `X-CorrelationId`     | Propagated; auto-generated otherwise      | Returned on all responses                  |
 
 ### Headers (out)

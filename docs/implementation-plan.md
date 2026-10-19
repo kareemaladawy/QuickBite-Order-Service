@@ -23,23 +23,23 @@ Goal: a runnable Express app with the same conventions as `core-service` plus th
    REFRESH_SECRET=...
    DB_MIGRATION_DIRECTORY=src/migrations
    DB_MIGRATION_EXTENSION=ts
-   REGIONS=eg,ksa
+   REGIONS=eg,sa
    DB_eg_HOST=localhost
    DB_eg_PORT=5432
    DB_eg_USERNAME=postgres
    DB_eg_PASSWORD=...
    DB_eg_NAME=order_service_eg
-   DB_ksa_HOST=...
-   DB_ksa_PORT=5432
-   DB_ksa_USERNAME=postgres
-   DB_ksa_PASSWORD=...
-   DB_ksa_NAME=order_service_ksa
+   DB_sa_HOST=...
+   DB_sa_PORT=5432
+   DB_sa_USERNAME=postgres
+   DB_sa_PASSWORD=...
+   DB_sa_NAME=order_service_sa
    DB_POOL_MAX=10
    # archive cluster — same shape, separate hosts; used starting Phase 7
    ARCHIVE_DB_eg_HOST=...
    ARCHIVE_DB_eg_NAME=order_service_archive_eg
-   ARCHIVE_DB_ksa_HOST=...
-   ARCHIVE_DB_ksa_NAME=order_service_archive_ksa
+   ARCHIVE_DB_sa_HOST=...
+   ARCHIVE_DB_sa_NAME=order_service_archive_sa
    REDIS_HOST=localhost
    REDIS_PORT=6379
    # RabbitMQ (inbound core events)

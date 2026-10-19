@@ -57,7 +57,7 @@ The system context (see `img.png`, `img_1.png`):
 
 ### Shard key: country
 
-One Postgres cluster per country: `eg`, `ksa`, ... The DB column and code identifier is `region` so the router stays generic if we ever sub-shard a country (e.g. `eg-cai`, `eg-alx`) — but in this milestone `region == country code`.
+One Postgres cluster per country: `eg`, `sa`, ... The DB column and code identifier is `region` so the router stays generic if we ever sub-shard a country (e.g. `eg-cai`, `eg-alx`) — but in this milestone `region == country code`.
 
 ### Why country (and not customer_id, restaurant_id, order_id)?
 
@@ -85,7 +85,7 @@ For `POST /orders`, if no `X-Region` is supplied, the service derives the region
 
 Only one pattern exists, outside the hot path:
 
-1. **System admin global views** — fan-out controller that calls each shard sequentially or in parallel up to a fan-out cap. Pagination is per-shard with a merged "tagged cursor" (shard:cursor). With ~2 countries today (`eg`, `ksa`) this is cheap.
+1. **System admin global views** — fan-out controller that calls each shard sequentially or in parallel up to a fan-out cap. Pagination is per-shard with a merged "tagged cursor" (shard:cursor). With ~2 countries today (`eg`, `sa`) this is cheap.
 
 A customer who has ordered in multiple countries is rare; we don't optimize for it in this milestone.
 

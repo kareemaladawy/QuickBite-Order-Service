@@ -1,4 +1,4 @@
-import {PaginationParams, FilterParams} from "./cursor-pagination";
+import {PaginationParams, FilterParams} from "./types";
 
 const DEFAULT_SORT_BY = "createdAt";
 const DEFAULT_LIMIT = 20;

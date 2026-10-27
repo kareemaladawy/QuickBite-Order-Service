@@ -1,4 +1,4 @@
-type TimeUnit = 'd' | 'h' | 'm' | 's';
+import { TimeUnit } from "./types";
 
 const multipliers: Record<TimeUnit, number> = {
     s: 1000,

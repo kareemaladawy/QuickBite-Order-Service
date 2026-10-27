@@ -12,6 +12,7 @@
     "migrate:status": "knex --knexfile src/lib/knex/knexfile.ts migrate:status",
     "migrate:make": "knex --knexfile src/lib/knex/knexfile.ts migrate:make",
     "migrate:all": "tsx scripts/migrate-all.ts",
+    "db:ensure-partitions": "tsx scripts/ensure-order-partitions.ts",
     "knex": "node --import tsx node_modules/knex/bin/cli.js --knexfile src/lib/knex/knexfile.ts"
   },
   "dependencies": {

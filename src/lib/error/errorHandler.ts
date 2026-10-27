@@ -1,6 +1,6 @@
-import type {Request, Response, NextFunction} from "express";
-import {logger} from "../logger/logger";
-import {AppError} from "./AppError";
+import type { Request, Response, NextFunction } from "express";
+import { logger } from "../logger/logger";
+import { AppError } from "./AppError";
 
 export function errorHandler(
     err: Error,
@@ -8,7 +8,7 @@ export function errorHandler(
     res: Response,
     _next: NextFunction,
 ) {
-    const appErr = err instanceof AppError ? err : new AppError(err.message ?? "Unknown error", 500, false);
+    const appErr = err instanceof AppError ? err : new AppError(err?.message ?? "Unknown error", 500, false);
     const operational = appErr.isOperational;
 
     logger.error(appErr.message, {
@@ -21,7 +21,10 @@ export function errorHandler(
     });
 
     if (operational) {
-        return res.status(appErr.statusCode).json({error: appErr.message});
+        return res.status(appErr.statusCode).json({
+            error: appErr.message,
+            ...(appErr.details !== undefined ? { details: appErr.details } : {}),
+        });
     }
-    return res.status(500).json({error: "Something went wrong"});
+    return res.status(500).json({ error: "Something went wrong" });
 }

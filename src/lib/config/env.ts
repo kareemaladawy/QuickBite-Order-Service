@@ -1,6 +1,14 @@
 import path from "path";
 import { config } from "dotenv";
 import { z } from "zod";
+import { ShardConfig } from "./types";
+
+// `TIMESTAMP` (no tz) columns don't carry a time zone — Postgres ignores any offset on
+// the value it's given and stores/compares the literal digits. If this process' local
+// zone isn't UTC, `new Date()` on write and `.toISOString()` on read disagree by that
+// offset (e.g. cursor-pagination comparisons silently return the wrong rows). Forcing
+// the process to UTC makes "local wall clock" and "UTC" the same digits, everywhere.
+process.env.TZ = "UTC";
 
 // C:\Users\ABDULLAH\Desktop\quickbite\order-service\.env
 config({ path: path.resolve(__dirname, "../../../.env") });
@@ -49,14 +57,6 @@ function parseRegions(raw: string): string[] {
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
-}
-
-export interface ShardConfig {
-    host: string;
-    port: number;
-    username: string;
-    password: string;
-    name: string;
 }
 
 function readShardConfig(region: string, prefix: "DB" | "ARCHIVE_DB"): ShardConfig {

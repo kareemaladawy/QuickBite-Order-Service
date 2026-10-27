@@ -1,23 +1,5 @@
 import {Knex} from "knex";
-
-export interface PaginationParams {
-    cursor?: string;
-    limit: number;
-    sortBy: string;
-    sortOrder: "asc" | "desc";
-}
-
-export interface FilterParams {
-    field: string;
-    operator: "eq" | "gt" | "lt" | "lte" | "gte" | "in" | "like";
-    value: string | string[];
-}
-
-export interface PaginationMeta {
-    nextCursor: string | null;
-    hasMore: boolean;
-    count: number;
-}
+import {FilterParams, PaginationMeta, PaginationParams} from "./types";
 
 function camelToSnake(str: string): string {
     return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -82,7 +64,13 @@ export function buildPaginationResult<T>(
 
     if (data.length > 0) {
         const lastItem = data[data.length - 1] as Record<string, unknown>;
-        nextCursor = hasMore && lastItem ? String(lastItem[sortBy]) : null;
+        const sortValue = lastItem[sortBy];
+        // Date.toString() (e.g. "Mon Oct 19 2026 14:29:53 GMT+0300 ...") is not a stable
+        // cursor: applyCursorPagination feeds it straight back into a SQL comparison, so
+        // it must round-trip as ISO 8601, not a locale-formatted string.
+        nextCursor = hasMore && lastItem
+            ? sortValue instanceof Date ? sortValue.toISOString() : String(sortValue)
+            : null;
     }
     return {
         data,

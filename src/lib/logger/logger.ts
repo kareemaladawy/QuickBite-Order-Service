@@ -1,4 +1,4 @@
-type LogLevel = "info" | "error" | "warn" | "debug";
+import { LogLevel } from "./types";
 
 export class Logger {
     private static instance: Logger;

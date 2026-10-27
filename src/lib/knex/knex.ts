@@ -1,5 +1,6 @@
 import {Knex} from "knex";
 import {destroyAllShards, getArchiveShard, getHotShard, listConfiguredRegions} from "./shards";
+import {ShardPing} from "./types";
 
 /**
  * Returns the hot-cluster connection for the given region.
@@ -19,13 +20,6 @@ export function dbArchive(region: string): Knex {
 
 export async function destroyAll(): Promise<void> {
     await destroyAllShards();
-}
-
-export interface ShardPing {
-    region: string;
-    cluster: "hot" | "archive";
-    ok: boolean;
-    error?: string;
 }
 
 export async function pingAll(): Promise<ShardPing[]> {

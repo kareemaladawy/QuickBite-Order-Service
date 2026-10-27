@@ -32,4 +32,17 @@ export class RedisCacheProvider implements ICacheProvider {
             : await this.client.set(key, value, "NX");
         return res === "OK";
     }
+
+    async delByPattern(pattern: string): Promise<number> {
+        let cursor = "0";
+        let deleted = 0;
+
+        do {
+            const [next, keys] = await this.client.scan(cursor, "MATCH", pattern, "COUNT", 100);
+            cursor = next;
+            if (keys.length > 0) deleted += await this.client.del(...keys);
+        } while (cursor !== "0");
+
+        return deleted;
+    }
 }

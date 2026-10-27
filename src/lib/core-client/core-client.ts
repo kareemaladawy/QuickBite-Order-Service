@@ -25,7 +25,16 @@ export class CoreClient {
                     body: req.body ? JSON.stringify(req.body) : undefined,
                 });
                 if (res.status >= 500) throw coreUnavailableError(res.status);
-                if (!res.ok) throw coreUpstreamError(res.status, await res.text().catch(() => ""));
+                if (!res.ok) {
+                    const text = await res.text().catch(() => "");
+                    let parsed: {error?: string; details?: unknown} | undefined;
+                    try {
+                        parsed = text ? JSON.parse(text) : undefined;
+                    } catch {
+                        parsed = undefined;
+                    }
+                    throw coreUpstreamError(res.status, parsed?.error ?? text, parsed?.details);
+                }
                 if (res.status === 204) return undefined as T;
                 return (await res.json()) as T;
             },

@@ -96,11 +96,19 @@ A separate Postgres cluster per region (`order_service_archive`) holds rows olde
 
 Primary write target of this service. Holds the order header.
 
+**Deviation from the draft above (decided during Phase 1 implementation): `orders` is a native Postgres `PARTITION BY RANGE (created_at)` table, monthly partitions.** This is an addition on top of the schema drafted here, not something the original draft anticipated. Consequences:
+
+- Postgres requires every unique/PK constraint on a partitioned table to include the partition key. So the PK is **`(id, created_at)`**, not `id` alone, and `public_id`'s uniqueness is `UNIQUE (public_id, created_at)` instead of a bare `UNIQUE`. This still fully supports single-row lookup by `public_id` (it's the leading column of that index).
+- Any table with a real FK into `orders` must carry a **denormalized `created_at`** column and use a **composite FK** `(order_id, order_created_at) REFERENCES orders(id, created_at)`. This applies now to `order_items` (§3.2) and will apply to `transactions`, `payment_sessions`, `deliveries`, and `agent_earnings` in Phases 2–4 — update those sections the same way when you build them.
+- A `orders_default` partition catches any row whose `created_at` falls outside the pre-created monthly range (clock skew, backfills); it should stay empty in normal operation.
+- Partitions are created and kept rolling forward by `ensureOrderMonthPartitions` (`src/lib/knex/partitioning.ts`): the `orders` migration seeds the next 12 months at migration time, and `npm run db:ensure-partitions` (idempotent, safe to re-run) is the ops-facing script to keep 12 months pre-created — run it monthly via cron.
+- Two columns are added that the original draft omitted but the business logic requires: **`preparing_at TIMESTAMP NULL`** (every status transition stamps a `<verb>_at` column per CLAUDE.md §4, and `docs/business-logic/orders.md` §7 documents a `preparing` transition) and **`cancellation_reason TEXT NULL`** (§7/§9 of the same doc require a reason on cancellation; there was nowhere to put it).
+
 ```sql
 CREATE TABLE orders (
-    id              BIGSERIAL PRIMARY KEY,
+    id              BIGINT GENERATED ALWAYS AS IDENTITY,
     region          TEXT NOT NULL,                                -- shard key
-    public_id       UUID NOT NULL UNIQUE,                         -- client-facing id
+    public_id       UUID NOT NULL,                                -- client-facing id
     country_code    TEXT NOT NULL,
     restaurant_id   BIGINT NOT NULL,                              -- logical FK -> core.restaurants.id
     branch_id       BIGINT NOT NULL,                              -- logical FK -> core.restaurant_branches.id
@@ -125,20 +133,24 @@ CREATE TABLE orders (
     payment_method  TEXT NOT NULL CHECK (payment_method IN ('online','cod')),
     -- delivery
     delivery_agent_id BIGINT,                                     -- nullable until assigned
+    cancellation_reason TEXT NULL,                                -- required by the service when status -> cancelled
     -- timestamps
     created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
     accepted_at     TIMESTAMP NULL,
     rejected_at     TIMESTAMP NULL,
+    preparing_at    TIMESTAMP NULL,
     ready_at        TIMESTAMP NULL,
     assigned_at     TIMESTAMP NULL,
     picked_at       TIMESTAMP NULL,
     delivered_at    TIMESTAMP NULL,
-    cancelled_at    TIMESTAMP NULL
-);
+    cancelled_at    TIMESTAMP NULL,
+    PRIMARY KEY (id, created_at)
+) PARTITION BY RANGE (created_at);
 
--- supports GET /orders/{publicId}                               (customer & restaurant lookup)
-CREATE INDEX idx_orders_public_id ON orders (public_id);
+-- supports GET /orders/{publicId} (publicId is the leading column, so this also serves
+-- as a plain lookup index — no separate idx_orders_public_id needed)
+CREATE UNIQUE INDEX uq_orders_public_id_created_at ON orders (public_id, created_at);
 -- supports GET /customer/orders?year=YYYY                       (customer history, current year hot)
 CREATE INDEX idx_orders_customer_id_created_at ON orders (customer_id, created_at DESC);
 -- supports GET /restaurant/orders?branchId=&status=&from=&to=   (most queried — restaurant ops dashboard)
@@ -147,10 +159,13 @@ CREATE INDEX idx_orders_branch_status_created_at ON orders (branch_id, status, c
 CREATE INDEX idx_orders_status_created_at ON orders (status, created_at) WHERE status IN ('ready','assigned');
 -- supports GET /agents/tasks?status=
 CREATE INDEX idx_orders_delivery_agent_id_status ON orders (delivery_agent_id, status) WHERE delivery_agent_id IS NOT NULL;
+
+-- catch-all for rows outside the pre-created monthly range; see ensureOrderMonthPartitions
+CREATE TABLE orders_default PARTITION OF orders DEFAULT;
 ```
 
 Notes:
-- `public_id` (UUID) is what we expose. The bigint `id` stays internal.
+- `public_id` (UUID) is what we expose. The bigint `id` stays internal. `public_id` is generated in application code (`uuid` v4), not a DB default — see CLAUDE.md §2.
 - `total` is denormalized for read efficiency; recomputed and asserted at insert and on any line-item change.
 - We store `delivery_address_text_snapshot` and lat/lng on the order so the order remains coherent if the user later deletes the saved address.
 
@@ -158,11 +173,14 @@ Notes:
 
 ### 3.2 `order_items`
 
+**Deviation**: carries a denormalized `order_created_at`, and the FK into `orders` is composite — see §3.1's partitioning note for why.
+
 ```sql
 CREATE TABLE order_items (
     id                  BIGSERIAL PRIMARY KEY,
     region              TEXT NOT NULL,
     order_id            BIGINT NOT NULL,
+    order_created_at    TIMESTAMP NOT NULL,                       -- denormalized from orders.created_at (FK target requirement)
     product_id          BIGINT NOT NULL,                          -- logical FK -> core.products.id
     quantity            INT NOT NULL CHECK (quantity > 0),
     unit_price_snapshot INT NOT NULL,                             -- minor units, frozen at order time
@@ -171,7 +189,7 @@ CREATE TABLE order_items (
     line_total          INT NOT NULL,                             -- quantity * unit_price_snapshot
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT fk_order_items_order_id FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    CONSTRAINT fk_order_items_order_id FOREIGN KEY (order_id, order_created_at) REFERENCES orders(id, created_at) ON DELETE CASCADE
 );
 
 -- supports GET /orders/{orderId} expansion (single batch fetch via whereIn for lists)

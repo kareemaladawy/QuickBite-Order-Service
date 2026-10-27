@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "http";
-import { verifyAccessToken, JWTPayload } from "../auth/jwt";
+import { verifyAccessToken } from "../auth/jwt";
+import { JWTPayload } from "../auth/types";
 import { WsNoTokenError } from "./errors";
 
 /**

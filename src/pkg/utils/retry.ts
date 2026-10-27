@@ -1,9 +1,4 @@
-export interface RetryOptions {
-    attempts: number;       // total tries including the first
-    initialDelayMs: number;
-    maxDelayMs: number;
-    isRetryable?: (err: unknown) => boolean;
-}
+import { RetryOptions } from "./types";
 
 export async function retry<T>(fn: () => Promise<T>, opts: RetryOptions): Promise<T> {
     let delay = opts.initialDelayMs;

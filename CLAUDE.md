@@ -139,7 +139,7 @@ If you find yourself importing `app/...` inside `pkg/` or `lib/`, **stop and ref
 
 Every module under `app/<module>/` follows the same skeleton (see `core-service/src/app/restaurant/` for the canonical example):
 
-1. **`entity/<module>.entity.ts`** — plain class, constructor takes `Partial<Entity>`. No decorators. No DB knowledge. No methods beyond simple invariants (e.g. `isExpired()` like `password-reset.entity.ts`).
+1. **`entity/<module>.entity.ts`** — plain class, constructor takes `Partial<Entity>`. No decorators. No DB knowledge. No methods beyond simple invariants (e.g. `isExpired()` like `password-reset.entity.ts`). The class itself is named for the thing it models, **without** an `Entity` suffix (e.g. `Order`, `OrderItem`, not `OrderEntity`) — only the filename carries the `.entity.ts` suffix.
 2. **`dto/*.request.dto.ts`** — class-validator-decorated request shapes. Validated by `validateBody(DTO, req.body)` in the controller.
 3. **`dto/*.response.dto.ts`** — **NEW for this service.** See §6.
 4. **`repository/<module>.repo.ts`** — exported functions (not classes). Each function takes optional `conn: Knex = db` to allow trx composition. Uses a `<MODULE>_COLUMNS` const and a private `toEntity(row)`.
@@ -148,7 +148,7 @@ Every module under `app/<module>/` follows the same skeleton (see `core-service/
 7. **`routes.ts`** — wires middleware (`authenticate`, `rbac`, `requireRestaurantMember`, `requireBranchAccess`, `idempotency`, `withCache`) to controller methods. Resolves controller from DI container at module load.
 8. **`enums.ts`** — string-valued enums; values match DB CHECK constraints.
 9. **`errors.ts`** — exported `AppError` instances (not classes). Stable wording, stable status codes.
-10. **`types.ts`** — module-level **non-entity** type aliases and helper interfaces shared between service / controller / repo (e.g. `BranchProductRow`, `ReserveStockInput`, response shapes that don't warrant a class). Keep services, controllers, and repos free of inline `interface X { ... }` declarations.
+10. **`types.ts`** — module-level **non-entity** type aliases and helper interfaces shared between service / controller / repo (e.g. `BranchProductRow`, `ReserveStockInput`, response shapes that don't warrant a class). Keep services, controllers, and repos free of inline `interface X { ... }` declarations. This rule is not limited to `app/` modules — see §10 for the codebase-wide version.
 
 ---
 
@@ -315,7 +315,8 @@ This service does **not** emit outbound async events to anyone in this milestone
   - DLQ: `order-service.core-events.dlq` for poison messages (routed via the queue's dead-letter-exchange).
 - Events consumed (routing key = event type):
   - `product.stock.changed`, `product.price.changed` → invalidate `core:product:*` keys.
-  - `branch.deactivated`, `branch.updated` → invalidate `core:branch:*` keys + reject-new-orders flag on `branch.deactivated`.
+  - `branch.deactivated` → invalidate `core:branch:{id}` and set the `core:branch:rejected:{id}` flag (1d TTL safety net) — `placeOrder()` checks this flag ahead of the cached branch read, so deactivation is enforced immediately rather than only once the cache naturally misses.
+  - `branch.updated` → invalidate `core:branch:{id}` and clear `core:branch:rejected:{id}` (a reactivation arrives as `branch.updated`, not a dedicated event).
   - `restaurant.suspended` → invalidate `core:restaurant:*` keys + flag pending orders for review.
   - `rbac.permissions_changed` → invalidate `core:rbac:perms:*` keys.
 - Delivery semantics: **at-least-once**. Manual ack after the handler commits. Duplicates are expected.
@@ -364,6 +365,9 @@ This service is the **hot path**. The following are non-negotiable:
 - ❌ Silent failures in webhooks. Webhook handlers must persist their result (success/failure) so retries are deterministic.
 - ❌ Mutating the input body or DTO inside a service. Treat them as read-only.
 - ❌ Creating new env vars without adding them to `lib/config/env.ts` zod schema.
+- ❌ Declaring a stable, named `AppError` outside `errors.ts` (e.g. `const MissingIdempotencyKeyError = new AppError(...)` sitting at the top of a controller). If the message is fixed and user-facing, it belongs in the module's `errors.ts` as a named export, even if only one call site uses it today. Genuinely dynamic messages (validation output, generic unknown-error wrapping) are the only exception — see §8 Error handling.
+- ❌ Suffixing entity classes with `Entity` (`OrderEntity`, `BranchEntity`). Name the class after the thing it models (`Order`, `Branch`); the `.entity.ts` filename already says what it is.
+- ❌ Inline `interface`/`type` declarations in a logic file (`*.service.ts`, `*.controller.ts`, `*.repo.ts`, middleware, route handlers, event handlers, etc.), anywhere in `app/`, `lib/`, or `pkg/`. Every such type goes in a sibling `types.ts` (`app/<module>/types.ts`, `lib/<area>/types.ts`, `pkg/<area>/types.ts`) and is imported from there — never declared next to the code that uses it. Exception: a file whose *entire purpose* is defining types (already named `types.ts`, `*.types.ts`, or `*.interface.ts`) is not "inline" and may keep its exports as-is.
 
 ---
 

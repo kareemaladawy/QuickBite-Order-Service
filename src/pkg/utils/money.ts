@@ -18,3 +18,8 @@ export function sumMinor(values: number[]): number {
 export function multiplyMinor(unitPriceMinor: number, quantity: number): number {
     return unitPriceMinor * quantity;
 }
+
+// bps = basis points (1/100th of a percent); 1000 bps = 10%.
+export function bpsOfMinor(amountMinor: number, bps: number): number {
+    return Math.round((amountMinor * bps) / 10_000);
+}

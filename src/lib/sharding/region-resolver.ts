@@ -1,6 +1,6 @@
-import type {Request, Response, NextFunction} from "express";
-import {isRegion} from "./regions";
-import {RegionNotResolvedError} from "./errors";
+import type { Request, Response, NextFunction } from "express";
+import { isRegion, normalizeRegion } from "./regions";
+import { RegionNotResolvedError } from "./errors";
 
 /**
  * Reads the region from the `X-Region` header only. "all" is preserved for
@@ -9,9 +9,12 @@ import {RegionNotResolvedError} from "./errors";
 export function resolveRegion(req: Request, _res: Response, next: NextFunction) {
     const raw = req.headers["x-region"]; // x-region: eg
     const value = Array.isArray(raw) ? raw[0] : raw;
-    if (value && (value === "all" || isRegion(value))) {
-        req.region = value;
+    const norm = normalizeRegion(value);
+
+    if (norm && (norm === "all" || isRegion(norm))) {
+        req.region = norm;
     }
+
     next();
 }
 

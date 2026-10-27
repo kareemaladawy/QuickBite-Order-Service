@@ -1,15 +1,7 @@
 import jwt from "jsonwebtoken";
 import {env} from "../config/env";
 import {NotAuthenticated} from "./errors";
-
-export interface JWTPayload {
-    userId: number;
-    role: string;
-    email: string;
-    restaurantId?: number;
-    restaurantRole?: string;
-    branchIds?: number[];
-}
+import {JWTPayload} from "./types";
 
 export function verifyAccessToken(token: string): JWTPayload {
     try {

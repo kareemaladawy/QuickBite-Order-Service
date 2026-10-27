@@ -1,8 +1,8 @@
 import knex, {Knex} from "knex";
-import {env, ShardConfig} from "../config/env";
+import {env} from "../config/env";
+import {ShardConfig} from "../config/types";
 import {assertRegion} from "../sharding/regions";
-
-type Cluster = "hot" | "archive";
+import {Cluster} from "./types";
 
 function buildConfig(shard: ShardConfig): Knex.Config {
     return {

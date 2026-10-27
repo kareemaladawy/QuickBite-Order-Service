@@ -1,31 +1,39 @@
 import {Request, Response, NextFunction} from "express";
 import {NotAuthenticated} from "./errors";
+import {RBACOptions} from "./types";
+import {container} from "../di/container";
+import {TOKENS} from "../di/tokens";
+import {PermissionCacheService} from "./permission-cache.service";
 
 // Role constants kept minimal here; the permission lookup is wired later via a
 // cached projection from core-service (Phase 1+ handler).
 const SYSTEM_ADMIN = "system_admin";
 const RESTAURANT_USER = "restaurant_user";
 
-export interface RBACOptions {
-    resource: string;
-    action: string;
-    allowSystemAdmin?: boolean; // default true
-}
-
 /**
- * Middleware placeholder: until the permission-cache is wired (via an `app/rbac` module
- * or a lib-level permission client), this middleware enforces only the "system_admin
- * bypass" and rejects anything else with 403. Per-permission checks land in the module
- * phase that needs them.
+ * Resolved per-request (not at module load) so this middleware can be constructed by
+ * routes.ts before/after container.ts finishes registering — matches the pattern in
+ * `lib/cache/withCache.ts` and `lib/idempotency/idempotency.ts`.
  */
 export function rbac(_options: RBACOptions) {
-    return (req: Request, res: Response, next: NextFunction) => {
-        if (!req.user) throw NotAuthenticated;
-        const {allowSystemAdmin = true} = _options;
-        if (allowSystemAdmin && req.user.role === SYSTEM_ADMIN) return next();
-        // TODO(phase-1): wire permission-cache service for RESTAURANT_USER role.
-        if (req.user.role === RESTAURANT_USER) return next();
-        return res.status(403).json({error: "Permission denied"});
+    return async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            if (!req.user) throw NotAuthenticated;
+            const {allowSystemAdmin = true, resource, action} = _options;
+            if (allowSystemAdmin && req.user.role === SYSTEM_ADMIN) return next();
+            if (req.user.role === RESTAURANT_USER) {
+                const permissionCache = container.resolve<PermissionCacheService>(TOKENS.PermissionCacheService);
+                const allowed = await permissionCache.hasPermission(
+                    req.user.role,
+                    `${resource}:${action}`,
+                    req.correlationId,
+                );
+                if (allowed) return next();
+            }
+            return res.status(403).json({error: "Permission denied"});
+        } catch (err) {
+            next(err);
+        }
     };
 }
 

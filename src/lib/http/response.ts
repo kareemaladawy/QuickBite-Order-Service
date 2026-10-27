@@ -1,11 +1,6 @@
 import {Response} from "express";
-import {PaginationMeta} from "./pagination/cursor-pagination";
-
-export interface ApiResponse<T = unknown> {
-    success: boolean;
-    data?: T;
-    meta?: object;
-}
+import {PaginationMeta} from "./pagination/types";
+import {ApiResponse} from "./types";
 
 export function sendSuccess<T>(res: Response, data: T, statusCode = 200, meta?: object) {
     const body: ApiResponse<T> = {success: true, data};

@@ -38,7 +38,12 @@ export class OrderController {
 
     getOrder = async (req: Request, res: Response, next: NextFunction) => {
         try {
-            const { order, items } = await this.orderService.getOrder(String(req.params.orderId), req.region!, req.user!);
+            const { order, items } = await this.orderService.getOrder(
+                String(req.params.orderId),
+                req.region!,
+                req.user!
+            );
+
             sendSuccess(res, OrderResponseDTO.from(order, items));
         } catch (error) {
             next(error);
@@ -53,6 +58,7 @@ export class OrderController {
                 Number(req.params.restaurantId),
                 Number(req.params.branchId),
             );
+
             sendSuccess(res, OrderResponseDTO.from(order, items));
         } catch (error) {
             next(error);

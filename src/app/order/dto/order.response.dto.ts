@@ -1,6 +1,7 @@
 import { Order } from "../entity/order.entity";
 import { OrderItem } from "../entity/order-item.entity";
 import { OrderStatus, PaymentMethod } from "../enums";
+import { PaymentInitSummary } from "../types";
 
 export class OrderItemResponseDTO {
     productId!: number;
@@ -48,8 +49,11 @@ export class OrderResponseDTO {
     deliveredAt!: string | null;
     cancelledAt!: string | null;
     items!: OrderItemResponseDTO[];
+    // Only set for a freshly-placed online order awaiting payment — the redirect the
+    // client needs to send the customer to (see docs/business-logic/payments.md §2).
+    payment!: PaymentInitSummary | null;
 
-    static from(order: Order, items: OrderItem[]): OrderResponseDTO {
+    static from(order: Order, items: OrderItem[], paymentInit?: PaymentInitSummary): OrderResponseDTO {
         const dto = new OrderResponseDTO();
         dto.id = order.publicId;
         dto.status = order.status;
@@ -75,6 +79,7 @@ export class OrderResponseDTO {
         dto.deliveredAt = order.deliveredAt?.toISOString() ?? null;
         dto.cancelledAt = order.cancelledAt?.toISOString() ?? null;
         dto.items = items.map(OrderItemResponseDTO.from);
+        dto.payment = paymentInit ?? null;
         return dto;
     }
 }

@@ -3,7 +3,7 @@ import { Order } from "../entity/order.entity";
 import { OrderStatus } from "../enums";
 import { applyCursorPagination } from "../../../lib/http/pagination/cursor-pagination";
 import { PaginationParams } from "../../../lib/http/pagination/types";
-import { CreateOrderRow, FindOrdersByBranchFilters, UpdateOrderStatusInput } from "../types";
+import { CreateOrderRow, FindOrdersByBranchFilters, OrderCompositeId, UpdateOrderStatusInput } from "../types";
 
 const ORDER_COLUMNS = [
     "id",
@@ -111,6 +111,52 @@ export async function findOrderByPublicId(publicId: string, conn: Knex): Promise
     return row ? toEntity(row) : undefined;
 }
 
+// Composite lookup by the partitioned PK — used where the caller only has the
+// internal id + denormalized created_at (e.g. a transactions row), not the public_id.
+export async function findOrderById(id: number, createdAt: Date, conn: Knex): Promise<Order | undefined> {
+    const row = await conn("orders").where("id", id).where("created_at", createdAt).select(ORDER_COLUMNS).first();
+    return row ? toEntity(row) : undefined;
+}
+
+// supports the pending-payment sweep job (lib/jobs/pending-payment-sweep.ts) —
+// idx_orders_pending_payment_created_at. Bounded by `limit` so one sweep tick can't
+// run unboundedly long even if a backlog builds up. Excludes an order that already has
+// a succeeded charge/cod_collection: that order isn't abandoned, it's just stuck mid
+// place-order because the post-charge `pending_payment -> placed` transition failed or
+// never ran (see payment-webhook.service.ts's handleCapture comment). The payment
+// reconciler job (lib/jobs/payment-reconciler.ts) is what retries that transition —
+// this sweep must never cancel an order that was already paid for.
+export async function findStalePendingPaymentOrders(cutoff: Date, conn: Knex, limit = 100): Promise<Order[]> {
+    const rows = await conn("orders")
+        .where("orders.status", OrderStatus.PENDING_PAYMENT)
+        .where("orders.created_at", "<", cutoff)
+        .whereNotExists(
+            conn("transactions")
+                .select(1)
+                .whereRaw("transactions.order_id = orders.id")
+                .whereIn("transactions.transaction_type", ["charge", "cod_collection"])
+                .where("transactions.status", "succeeded"),
+        )
+        .orderBy("orders.created_at", "asc")
+        .limit(limit)
+        .select(ORDER_COLUMNS);
+    return rows.map(toEntity);
+}
+
+// Batch composite-PK lookup (CLAUDE.md §7 — no N+1) for callers that only hold
+// (id, createdAt) pairs from another table's denormalized order reference — e.g. the
+// payment reconciler correlating a succeeded charge back to its order.
+export async function findOrdersByIds(pairs: OrderCompositeId[], conn: Knex): Promise<Order[]> {
+    if (pairs.length === 0) return [];
+    const rows = await conn("orders")
+        .whereIn(
+            ["id", "created_at"],
+            pairs.map((p) => [p.id, p.createdAt]),
+        )
+        .select(ORDER_COLUMNS);
+    return rows.map(toEntity);
+}
+
 export async function findOrdersByCustomer(
     customerId: number,
     pagination: PaginationParams,
@@ -147,6 +193,7 @@ export async function updateOrderStatus(
         status: data.status,
         updated_at: new Date(),
     };
+
     if (data.timestampColumn) patch[data.timestampColumn] = new Date();
     if (data.cancellationReason !== undefined) patch.cancellation_reason = data.cancellationReason;
 
@@ -159,6 +206,14 @@ export async function updateOrderStatus(
         .returning(ORDER_COLUMNS);
 
     return toEntity(row);
+}
+
+// Compensating delete for an order whose online payment session never got created
+// (placeOrder's payment-init failure path) — the order was never returned to the
+// client, so nothing observed it existing. order_items cascades via its FK (see
+// 20260418000030_create_order_items.ts), so this alone is enough.
+export async function deleteOrder(orderId: number, orderCreatedAt: Date, conn: Knex): Promise<void> {
+    await conn("orders").where("id", orderId).where("created_at", orderCreatedAt).del();
 }
 
 // Forward scaffolding for the Phase 3 assignment service — not wired to any route yet.

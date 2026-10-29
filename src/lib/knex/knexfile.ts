@@ -1,5 +1,5 @@
-import type { Knex } from "knex";
 import { env } from "../config/env";
+import type { ShardKnexConfig } from "./types";
 
 /**
  * Builds a knex config for the region+cluster identified by env vars.
@@ -21,7 +21,7 @@ if (!shard) {
     throw new Error(`No ${cluster} shard configured for region "${region}"`);
 }
 
-const config: Knex.Config = {
+const config: ShardKnexConfig = {
     client: "pg",
     connection: {
         host: shard.host,
@@ -35,6 +35,7 @@ const config: Knex.Config = {
         directory: env.db.migrationDirectory,
         extension: env.db.migrationExtension,
     },
+    region,
 };
 
 export default config;

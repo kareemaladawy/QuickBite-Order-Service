@@ -12,4 +12,11 @@ export const TOKENS = {
     OrderService: Symbol.for("OrderService"),
     OrderController: Symbol.for("OrderController"),
     OrderEventsController: Symbol.for("OrderEventsController"),
+
+    // payment module
+    PaymentProviderRegistry: Symbol.for("PaymentProviderRegistry"),
+    PaymentService: Symbol.for("PaymentService"),
+    PaymentController: Symbol.for("PaymentController"),
+    PaymentWebhookService: Symbol.for("PaymentWebhookService"),
+    WebhookController: Symbol.for("WebhookController"),
 };

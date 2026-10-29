@@ -4,7 +4,7 @@ Owner module: `app/restaurant-finance/`
 
 Read views over a restaurant's running balance and payout history.
 
-The **writes** that change the balance live in the Deliveries module (settlement on delivered) and the Payments module (refunds, payout recording). This module is read-only (with one admin-only write: record-payout).
+The **settlement write** itself — `recordDeliverySettlement` — lives in *this* module, but it's invoked by the Agents module's `delivery.service` on `delivered` (passed the trx it already owns), not called directly by a client. The Payments module separately writes refunds. This module's own client-facing surface is read-only, with one admin-only write: record-payout.
 
 ---
 
@@ -94,13 +94,17 @@ Out of scope. The platform records payouts that operations executes externally. 
 
 ---
 
-## 7. Settlement formula (for reference — implementation lives in Deliveries module)
+## 7. Settlement formula — `finance.service.recordDeliverySettlement(orderId, trx)`
+
+This lives in this module and is **the** place order commission is calculated — not in the Agents/delivery module, which only calls it. Invoked by the Agents module's `delivery.service` on `orders.status → 'delivered'`, inside the trx `delivery.service` already owns:
 
 ```
 on order delivered:
-  delta_balance = order.subtotal - commission
   commission    = floor(order.subtotal × branch.commission_rate)
+  delta_balance = order.subtotal - commission
 ```
+
+Writes the `transactions(type='commission')` row and credits `restaurant_balances.balance += delta_balance`, both inside the caller's trx (per CLAUDE.md §8: the service that opens the trx passes it through; this is a cross-module *service* call, never a repo reach-through).
 
 `commission_rate` is a property of the branch (`restaurant_branches.commission` in core, integer percent or basis points — TBD with core team; for now treated as **basis points / 10000**).
 

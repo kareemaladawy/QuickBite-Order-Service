@@ -158,7 +158,7 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
   - `rejected` → stamp `rejected_at`; trigger refund or void COD; WS to customer.
   - `preparing` → stamp; WS.
   - `ready` → stamp; **enqueue auto-assignment** (delivery service).
-  - `assigned` → only system writes this status (assignment service). Manual admin override goes through `POST /deliveries/assign/{orderId}` not this endpoint.
+  - `assigned` → only system writes this status (the Agents module's assignment service, on accept). Manual admin override goes through `POST /orders/{orderId}/delivery/assign`, not this endpoint.
   - `cancelled` → stamp `cancelled_at`, body must include `reason`. If online & captured → trigger refund. If COD → void the pending `cod_collection` transaction.
 
 ---

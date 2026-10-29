@@ -48,6 +48,38 @@ const baseSchema = z.object({
     CORE_INTERNAL_API_KEY: z.string(),
 
     WS_HEARTBEAT_SEC: z.string().default("30"),
+
+    KASHIER_BASE_URL: z.string().default("https://test-api.kashier.io"),
+    KASHIER_MERCHANT_ID: z.string(),
+    KASHIER_API_KEY: z.string(),
+    KASHIER_SECRET_KEY: z.string(),
+    KASHIER_RETURN_URL: z.string(),
+    // Public URL Kashier should POST payment events to — optional because a merchant
+    // can instead register one in the Kashier dashboard's webhook management module,
+    // and because it's meaningless against an unreachable localhost dev box.
+    KASHIER_WEBHOOK_URL: z.string().optional(),
+    // Named per-provider, not a global default — each provider configured in
+    // lib/payments/init.ts carries its own returnUrl/sessionTimeoutMin, since a
+    // different PSP isn't guaranteed to use the same redirect flow or session TTL.
+    KASHIER_SESSION_TIMEOUT_MIN: z.string().default("15"),
+    // region:providerName pairs — which online payment provider (if any) serves each
+    // region. Kashier only settles in Egypt today; a second region gets its own
+    // provider by adding one more pair here (see lib/payments/registry.ts).
+    PAYMENT_PROVIDERS_BY_REGION: z.string().default("eg:kashier"),
+
+    // docs/business-logic/orders.md §9 / payments.md §9 — a pending_payment order
+    // whose online payment never completed is auto-cancelled (and its stock reserved
+    // for it released) after this many minutes, by a background sweep.
+    ORDER_PENDING_PAYMENT_TIMEOUT_MIN: z.string().default("15"),
+    ORDER_SWEEP_INTERVAL_SEC: z.string().default("60"),
+
+    // docs/business-logic/payments.md §9 — a succeeded charge whose order is still
+    // stuck in pending_payment (the post-charge transition failed or never ran) gets
+    // its `pending_payment -> placed` transition retried by a background reconciler.
+    // `GRACE_SEC` keeps it from racing the webhook's own synchronous retry of that
+    // same transition for a charge that only just succeeded.
+    PAYMENT_RECONCILER_GRACE_SEC: z.string().default("120"),
+    PAYMENT_RECONCILER_INTERVAL_SEC: z.string().default("60"),
 });
 
 const parsed = baseSchema.parse(process.env);
@@ -57,6 +89,15 @@ function parseRegions(raw: string): string[] {
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
+}
+
+function parseRegionProviderMap(raw: string): Record<string, string> {
+    const map: Record<string, string> = {};
+    for (const pair of raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0)) {
+        const [region, provider] = pair.split(":").map((s) => s.trim());
+        if (region && provider) map[region] = provider;
+    }
+    return map;
 }
 
 function readShardConfig(region: string, prefix: "DB" | "ARCHIVE_DB"): ShardConfig {
@@ -145,5 +186,32 @@ export const env = {
 
     ws: {
         heartbeatSec: Number(parsed.WS_HEARTBEAT_SEC),
+    },
+
+    // Kashier's webhook signature is HMAC-SHA256 over `data` fields using the Payment
+    // API key (same value as `apiKey` below) — there is no separate webhook secret on
+    // Kashier's side, so unlike the plan draft we don't carry a KASHIER_WEBHOOK_SECRET.
+    kashier: {
+        baseUrl: parsed.KASHIER_BASE_URL,
+        merchantId: parsed.KASHIER_MERCHANT_ID,
+        apiKey: parsed.KASHIER_API_KEY,
+        secretKey: parsed.KASHIER_SECRET_KEY,
+        returnUrl: parsed.KASHIER_RETURN_URL,
+        webhookUrl: parsed.KASHIER_WEBHOOK_URL,
+        sessionTimeoutMin: Number(parsed.KASHIER_SESSION_TIMEOUT_MIN),
+    },
+
+    payments: {
+        regionProviderMap: parseRegionProviderMap(parsed.PAYMENT_PROVIDERS_BY_REGION),
+    },
+
+    orders: {
+        pendingPaymentTimeoutMin: Number(parsed.ORDER_PENDING_PAYMENT_TIMEOUT_MIN),
+        sweepIntervalSec: Number(parsed.ORDER_SWEEP_INTERVAL_SEC),
+    },
+
+    paymentReconciler: {
+        graceSec: Number(parsed.PAYMENT_RECONCILER_GRACE_SEC),
+        intervalSec: Number(parsed.PAYMENT_RECONCILER_INTERVAL_SEC),
     },
 };

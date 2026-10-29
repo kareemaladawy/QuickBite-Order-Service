@@ -7,6 +7,7 @@ import { logger } from "../../../lib/logger/logger";
 import { cacheProvider } from "../../../lib/cache/init";
 import { JWTPayload } from "../../../lib/auth/types";
 import { bpsOfMinor, multiplyMinor, sumMinor } from "../../../pkg/utils/money";
+import { addMs, toMs } from "../../../pkg/utils/time";
 import { PaginationParams } from "../../../lib/http/pagination/types";
 import {
     getBranch,
@@ -22,9 +23,13 @@ import {
 } from "../repository/order-item.repo";
 import {
     createOrder,
+    deleteOrder,
+    findOrderById,
     findOrderByPublicId,
     findOrdersByBranch,
     findOrdersByCustomer,
+    findOrdersByIds,
+    findStalePendingPaymentOrders,
     updateOrderStatus,
 } from "../repository/order.repo";
 import { assertTransition, STATUS_TIMESTAMP_COLUMN } from "./order-status.service";
@@ -46,8 +51,10 @@ import {
     GetOrderResult,
     OffendingOrderItem,
     OrderActorContext,
+    OrderCompositeId,
     PlaceOrderResult,
 } from "../types";
+import type { PaymentService } from "../../payment/service/payment.service";
 
 // Flat 10% platform service fee, same across all regions until per-region/per-branch
 // rates are configured.
@@ -56,6 +63,10 @@ const PLATFORM_SERVICE_RATE_BPS = 1000;
 // Must match the mount in app.ts (`/api/v1`) + routes.ts (`/restaurant/orders`) — this
 // is what withCache() keys GET /restaurant/orders under (see order.routes.ts).
 const RESTAURANT_ORDERS_PATH = "/api/v1/restaurant/orders";
+
+// Stamped by sweepStalePendingPaymentOrders — stable, system-facing wording, not
+// something a customer or restaurant action ever produces.
+const STALE_PENDING_PAYMENT_CANCELLATION_REASON = "Payment not completed in time";
 
 // GET /restaurant/orders is cached per exact query string (filters, pagination), so a
 // single `del(key)` can't target every cached variant for a branch — glob-match every
@@ -90,6 +101,14 @@ export class OrderService {
         const branch = await getBranch(data.branchId, correlationId);
         if (!branch.isActive || !branch.acceptOrders || branch.restaurantStatus !== RestaurantStatus.ACTIVE) {
             throw BranchNotAcceptingOrdersError;
+        }
+
+        // Reject an online order for a region Kashier doesn't support before any stock
+        // reservation or order row is created, rather than only discovering this once
+        // initForOrder runs after the order already exists (PaymentService owns the
+        // actual region list — see assertOnlinePaymentSupported).
+        if (data.paymentMethod === PaymentMethod.ONLINE) {
+            container.resolve<PaymentService>(TOKENS.PaymentService).assertOnlinePaymentSupported(branch.region);
         }
 
         // Step 3: customer address.
@@ -203,9 +222,47 @@ export class OrderService {
 
         if (data.paymentMethod === PaymentMethod.COD) {
             this.emitWs(`branch:${branch.id}`, "order.created", order);
+            return { order, items };
         }
 
-        return { order, items };
+        // Online orders: init the Kashier session inline (product decision — no
+        // separate "first init" endpoint, see docs/business-logic/payments.md §2).
+        // `order.created`/`order.status_changed` WS events are deferred until the
+        // capture webhook actually confirms payment (markPlacedBySystem below).
+        const paymentService = container.resolve<PaymentService>(TOKENS.PaymentService);
+        try {
+            const paymentInit = await paymentService.initForOrder({
+                orderId: order.id,
+                orderCreatedAt: order.createdAt,
+                orderPublicId: order.publicId,
+                customerId: order.customerId,
+                amountMinor: order.total,
+                currency: order.currency,
+                region,
+            });
+
+            return { order, items, paymentInit };
+        } catch (err) {
+            // Payment init failed after the order was already committed above — the
+            // client never saw this order (placeOrder hasn't returned yet), so rather
+            // than leave it dangling in `pending_payment` forever, undo it: delete the
+            // order (order_items cascades via its FK) and release the stock reserved
+            // for it. Compensating actions are best-effort and logged, not swallowed —
+            // the original payment error is always what's surfaced to the client.
+            try {
+                await deleteOrder(order.id, order.createdAt, conn);
+                await releaseStock(branch.id, reservationItems, idempotencyKey, correlationId);
+                await invalidateRestaurantOrdersCache(region, branch.id);
+            } catch (cleanupErr) {
+                logger.error("cleanup after payment-init failure failed — order and/or stock reservation left dangling", {
+                    orderId: order.id,
+                    branchId: branch.id,
+                    idempotencyKey,
+                    error: (cleanupErr as Error).message,
+                });
+            }
+            throw err;
+        }
     };
 
     getOrder = async (publicId: string, region: string, actor: JWTPayload): Promise<GetOrderResult> => {
@@ -275,6 +332,129 @@ export class OrderService {
         this.emitWs(`branch:${order.branchId}`, "order.status_changed", updated);
 
         return updated;
+    };
+
+    // No ownership check — for system-driven callers (the Kashier webhook handler)
+    // that don't have a JWTPayload actor. Kept separate from getOrder() rather than
+    // threading a nullable actor through its assertCanView().
+    getOrderForSystem = async (publicId: string, region: string): Promise<Order> => {
+        const order = await findOrderByPublicId(publicId, db(region));
+        if (!order) throw OrderNotFoundError;
+        return order;
+    };
+
+    // Same no-ownership-check contract as getOrderForSystem, but keyed by the
+    // composite PK — for callers that only hold a transactions row (orderId +
+    // the denormalized orderCreatedAt), e.g. PaymentService.getById's ownership check.
+    getOrderByIdForSystem = async (id: number, createdAt: Date, region: string): Promise<Order> => {
+        const order = await findOrderById(id, createdAt, db(region));
+        if (!order) throw OrderNotFoundError;
+        return order;
+    };
+
+    // Batch counterpart of getOrderByIdForSystem (CLAUDE.md §7 — no N+1), for callers
+    // such as the payment reconciler that hold several (id, createdAt) pairs at once.
+    getOrdersByCompositeIds = async (pairs: OrderCompositeId[], region: string): Promise<Order[]> => {
+        return findOrdersByIds(pairs, db(region));
+    };
+
+    // Drives the `pending_payment -> placed` transition on a captured payment
+    // (docs/business-logic/payments.md §3). Called by payment-webhook.service.ts,
+    // which never reaches into order.repo directly (CLAUDE.md §3 cross-module rule).
+    markPlacedBySystem = async (order: Order, region: string): Promise<Order> => {
+        const actorContext: OrderActorContext = {
+            type: OrderActorType.SYSTEM,
+            orderCreatedAt: order.createdAt,
+            acceptedAt: order.acceptedAt,
+        };
+        assertTransition(order.status, OrderStatus.PLACED, actorContext);
+
+        const updated = await updateOrderStatus(
+            order.id,
+            order.createdAt,
+            { status: OrderStatus.PLACED },
+            db(region)
+        );
+
+        await invalidateRestaurantOrdersCache(region, updated.branchId);
+
+        this.emitWs(`branch:${updated.branchId}`, "order.created", updated);
+        this.emitWs(`customer:${updated.customerId}`, "order.status_changed", updated);
+
+        return updated;
+    };
+
+    // Background sweep (lib/jobs/pending-payment-sweep.ts) — a pending_payment order
+    // whose online payment never completed within `timeoutMin` is auto-cancelled and
+    // its reserved stock released, per docs/business-logic/orders.md §9 / payments.md
+    // §9. Returns how many orders it cancelled this pass, for the job's own logging.
+    sweepStalePendingPaymentOrders = async (region: string, timeoutMin: number): Promise<number> => {
+        const conn = db(region);
+        const cutoff = addMs(new Date(), -toMs(timeoutMin, "m"));
+        const staleOrders = await findStalePendingPaymentOrders(cutoff, conn);
+        if (staleOrders.length === 0) return 0;
+
+        // Batch-fetch every stale order's items in one round trip (CLAUDE.md §7 — no
+        // N+1), then group them back up per order.
+        const itemsByOrderId = new Map<number, OrderItem[]>();
+        for (const item of await findItemsByOrderIds(staleOrders.map((o) => o.id), conn)) {
+            const list = itemsByOrderId.get(item.orderId) ?? [];
+            list.push(item);
+            itemsByOrderId.set(item.orderId, list);
+        }
+
+        let cancelledCount = 0;
+        for (const order of staleOrders) {
+            try {
+                const actorContext: OrderActorContext = {
+                    type: OrderActorType.SYSTEM,
+                    orderCreatedAt: order.createdAt,
+                    acceptedAt: order.acceptedAt,
+                };
+                assertTransition(order.status, OrderStatus.CANCELLED, actorContext);
+
+                const updated = await updateOrderStatus(
+                    order.id,
+                    order.createdAt,
+                    {
+                        status: OrderStatus.CANCELLED,
+                        timestampColumn: STATUS_TIMESTAMP_COLUMN[OrderStatus.CANCELLED],
+                        cancellationReason: STALE_PENDING_PAYMENT_CANCELLATION_REASON,
+                    },
+                    conn,
+                );
+
+                // Best-effort: the order is already cancelled regardless of whether
+                // this succeeds — a release failure here means stock stays reserved,
+                // not that the order stays stuck in pending_payment.
+                try {
+                    const orderItems = itemsByOrderId.get(order.id) ?? [];
+                    await releaseStock(
+                        order.branchId,
+                        orderItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+                        `sweep:${order.publicId}`,
+                    );
+                } catch (releaseErr) {
+                    logger.error("sweep: releaseStock failed for cancelled order — stock may be left reserved", {
+                        orderId: order.id,
+                        branchId: order.branchId,
+                        error: (releaseErr as Error).message,
+                    });
+                }
+
+                await invalidateRestaurantOrdersCache(region, updated.branchId);
+                this.emitWs(`customer:${updated.customerId}`, "order.status_changed", updated);
+                this.emitWs(`branch:${updated.branchId}`, "order.status_changed", updated);
+                cancelledCount++;
+            } catch (err) {
+                logger.error("sweep: failed to cancel stale pending_payment order", {
+                    orderId: order.id,
+                    error: (err as Error).message,
+                });
+            }
+        }
+
+        return cancelledCount;
     };
 
     flagPendingOrdersForReview = async (restaurantId: number): Promise<void> => {

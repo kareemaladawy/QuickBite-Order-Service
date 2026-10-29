@@ -24,14 +24,14 @@ export class OrderController {
             }
 
             const data = await validateBody(CreateOrderRequestDTO, req.body);
-            const { order, items } = await this.orderService.placeOrder(
+            const { order, items, paymentInit } = await this.orderService.placeOrder(
                 req.user!,
                 data,
                 idempotencyKey,
                 req.correlationId,
             );
 
-            sendSuccess(res, OrderResponseDTO.from(order, items), 201);
+            sendSuccess(res, OrderResponseDTO.from(order, items, paymentInit), 201);
         } catch (error) {
             next(error);
         }

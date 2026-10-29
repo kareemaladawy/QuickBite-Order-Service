@@ -386,7 +386,7 @@ Follow this exact order — never skip ahead:
 9. Mount in `src/routes.ts`.
 10. Smoke test the endpoint manually before moving on.
 
-Implement one module end-to-end before starting the next. Order: **orders → payments → deliveries → agents → restaurant-finance → websocket integration → archival worker**. See `docs/implementation-plan.md`.
+Implement one module end-to-end before starting the next. Order: **orders → payments → agents (delivery lifecycle, assignment & presence, merged — no separate deliveries module) → restaurant-finance → archival worker**. WebSocket events are wired inline as each module lands, not in a separate phase. See `docs/implementation-plan.md`.
 
 ---
 

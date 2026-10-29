@@ -2,9 +2,9 @@ import knex, {Knex} from "knex";
 import {env} from "../config/env";
 import {ShardConfig} from "../config/types";
 import {assertRegion} from "../sharding/regions";
-import {Cluster} from "./types";
+import {Cluster, ShardKnexConfig} from "./types";
 
-function buildConfig(shard: ShardConfig): Knex.Config {
+function buildConfig(shard: ShardConfig, region: string): ShardKnexConfig {
     return {
         client: "pg",
         connection: {
@@ -22,6 +22,7 @@ function buildConfig(shard: ShardConfig): Knex.Config {
             directory: env.db.migrationDirectory,
             extension: env.db.migrationExtension,
         },
+        region,
     };
 }
 
@@ -32,7 +33,7 @@ export function getHotShard(region: string): Knex {
     assertRegion(region);
     let conn = hotByRegion.get(region);
     if (!conn) {
-        conn = knex(buildConfig(env.hotShards[region]));
+        conn = knex(buildConfig(env.hotShards[region], region));
         hotByRegion.set(region, conn);
     }
     return conn;
@@ -42,7 +43,7 @@ export function getArchiveShard(region: string): Knex {
     assertRegion(region);
     let conn = archiveByRegion.get(region);
     if (!conn) {
-        conn = knex(buildConfig(env.archiveShards[region]));
+        conn = knex(buildConfig(env.archiveShards[region], region));
         archiveByRegion.set(region, conn);
     }
     return conn;

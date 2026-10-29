@@ -169,12 +169,11 @@ class OrderDetailResponseDTO extends OrderResponseDTO {
   history: Array<{ status: OrderStatus; ts: string }>;
 }
 
+// No separate delivery row — this is a projection of the order's own status/timestamps.
 class DeliverySummaryResponseDTO {
-  id: number;
-  status: DeliveryStatus;
+  status: 'ready' | 'assigned' | 'picked' | 'delivered' | 'cancelled';
   agent?: { id: number; name: string; phone?: string; lastLat?: number; lastLng?: number; lastSeenAt?: string };
-  assignedAt: string;
-  acceptedAt?: string;
+  assignedAt?: string;
   pickedAt?: string;
   deliveredAt?: string;
 }
@@ -311,9 +310,9 @@ class PaymentInitResponseDTO {
 
 ---
 
-### 2.3 GET /api/payments/{paymentId}
+### 2.3 GET /api/restaurants/{restaurantId}/payments/{paymentId}
 
-**Auth**: `payments:read` (restaurant owner) or system_admin.
+**Auth**: `payments:read` (restaurant owner, own restaurant only — `requireRestaurantMember` middleware) or system_admin. Ownership is enforced before the handler runs, not inside `PaymentService`.
 
 **Response 200**
 
@@ -365,49 +364,42 @@ class RefundRequestDTO {
 
 ## 3. Deliveries
 
-### 3.1 POST /api/deliveries/assign/{orderId}
+There is **no `deliveries` resource/table** — delivery state is a projection of the order itself (`orders.status`, `orders.delivery_agent_id`, `assigned_at`/`picked_at`/`delivered_at`). All delivery endpoints hang off `/api/orders/{orderId}/delivery/...`. The identifier in every path and payload below is the order's `publicId`, never a delivery id.
 
-**Auth**: system_admin (or system internal).
+An auto/manual assignment first creates a Redis-only **offer** (`assignment:offer:<region>:<orderId>` → `{ agentId, expiresAt }`) and pushes `agent:<id>:task.offered`; it is not written to `orders` until the agent accepts (§3.3) or an admin force-assigns (§3.1). This keeps a timed-out or declined offer from ever touching Postgres.
+
+### 3.1 POST /api/orders/{orderId}/delivery/assign
+
+**Auth**: system_admin (or system internal, for the auto-assignment hook off `order.status → 'ready'`).
 
 **Request**
 
 ```ts
 class AssignDeliveryRequestDTO {
   @IsOptional() @IsInt() @Min(1)
-  agentId?: number;  // present → manual assignment to specific agent
+  agentId?: number;  // present → manual, bypasses the offer/accept flow and writes orders directly
 }
 ```
 
-**Response 201**
-
-```ts
-class DeliveryResponseDTO {
-  id: number;
-  orderPublicId: string;
-  agent: { id: number; name: string; phone?: string };
-  status: DeliveryStatus;
-  pickup: { lat: number; lng: number };
-  dropoff: { lat: number; lng: number };
-  distanceMeters: number | null;
-  assignedAt: string;
-}
-```
+**Response 200**: `DeliveryTaskResponseDTO` (see §4.4).
 
 **Errors**
 
 | Status | Body                                          |
 | ------ | --------------------------------------------- |
 | 409    | `{ "error": "OrderNotReady" }`                |
-| 409    | `{ "error": "OrderAlreadyHasActiveDelivery" }`|
+| 409    | `{ "error": "OrderAlreadyAssigned" }`         |
 | 409    | `{ "error": "NoEligibleAgents" }`             |
 
 ---
 
-### 3.2 POST /api/deliveries/reassign/{orderId}
+### 3.2 POST /api/orders/{orderId}/delivery/reassign
 
 **Auth**: system_admin.
 
-**Response 201**: `DeliveryResponseDTO` (the new row).
+Clears `orders.delivery_agent_id`, increments `orders.reassignment_attempts`, and re-runs assignment (§3.1's algorithm) for a new candidate.
+
+**Response 200**: `DeliveryTaskResponseDTO`.
 
 **Errors**
 
@@ -417,28 +409,41 @@ class DeliveryResponseDTO {
 
 ---
 
-### 3.3 PATCH /api/deliveries/{deliveryId}/status
+### 3.3 POST /api/orders/{orderId}/delivery/accept · /decline
 
-**Auth**: delivery_agent (must own the delivery).
+**Auth**: delivery_agent (must be the agent currently holding the Redis offer for this order).
+
+No request body. `accept` commits the offer: in one trx, sets `orders.delivery_agent_id`, `status='assigned'`, `assigned_at`; marks the agent busy in Redis; deletes the offer key; publishes `agent:<id>:task.assigned` and `customer:<id>` / `branch:<id>` `delivery.status_changed`. `decline` (or the offer expiring after `AGENT_ACCEPT_TIMEOUT_SEC`) deletes the offer key and triggers the same reassignment path as §3.2, without incrementing `reassignment_attempts` twice for the same cause.
+
+**Response 200**: `DeliveryTaskResponseDTO` (on accept) or `{ "ok": true }` (on decline).
+
+**Errors**: 409 `{ "error": "OfferExpired" }`, 403 if the caller isn't the offer's agent.
+
+---
+
+### 3.4 PATCH /api/orders/{orderId}/delivery/status
+
+**Auth**: delivery_agent (must be `orders.delivery_agent_id`).
 
 **Request**
 
 ```ts
 class UpdateDeliveryStatusRequestDTO {
-  @IsEnum(DeliveryStatus)
-  status!: 'accepted' | 'rejected' | 'picked' | 'delivered';
+  status!: 'picked' | 'delivered';
 
   @IsOptional() @IsString() @MaxLength(500)
   reason?: string;
 }
 ```
 
+Reuses the shared order-status machine from §1.5 — only `assigned → picked → delivered` is reachable through this endpoint.
+
 **Response 200**
 
 ```ts
 class DeliveryStatusResponseDTO {
-  id: number;
-  status: DeliveryStatus;
+  orderPublicId: string;
+  status: 'picked' | 'delivered';
   updatedAt: string;
 }
 ```
@@ -478,9 +483,8 @@ Same body as `online`. Response 200 `{ "ok": true }` or 409 `NotOnline`.
 
 ```ts
 class DeliveryTaskResponseDTO {
-  deliveryId: number;
   orderPublicId: string;
-  status: DeliveryStatus;
+  status: 'assigned' | 'picked' | 'delivered';
   pickup: { branchName: string; lat: number; lng: number; addressText: string };
   dropoff: { lat: number; lng: number; addressText: string };
   itemsCount: number;
@@ -601,8 +605,8 @@ Server emits with `io.to("<room>").emit("<event.name>", payload)`. Heartbeat is 
 | ------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `customer:<userId>`       | the customer                              | `order.status_changed`, `delivery.position`, `payment.failed`, `payment.captured`                                                                                     |
 | `restaurant:<restId>`     | restaurant owner                          | `order.created`, `order.cancelled`                                                                                                                                    |
-| `branch:<branchId>`       | restaurant manager / staff (member)       | `order.created`, `order.status_changed`, `order.cancelled`, `delivery.assigned`                                                                                       |
-| `agent:<agentId>`         | the agent                                 | `task.assigned`, `task.cancelled`                                                                                                                                     |
+| `branch:<branchId>`       | restaurant manager / staff (member)       | `order.created`, `order.status_changed`, `order.cancelled`, `delivery.status_changed`                                                                                 |
+| `agent:<agentId>`         | the agent                                 | `task.offered`, `task.assigned`, `task.cancelled`                                                                                                                     |
 
 Payload shapes for events follow the response DTOs already defined (e.g. `order.status_changed.payload === { orderPublicId, status, updatedAt }`).
 
@@ -620,7 +624,7 @@ No auth. Returns 200 `OK` if DB ping succeeds, 500 otherwise. Mirrors core-servi
 
 This service exposes **no** internal HTTP endpoints for inter-service traffic.
 
-Async traffic from `core-service` (cache invalidation) arrives over **RabbitMQ**, not HTTP. See `system-design.md` §5 for topology, `database-design.md` §3.12 for the dedupe log. Message envelope:
+Async traffic from `core-service` (cache invalidation) arrives over **RabbitMQ**, not HTTP. See `system-design.md` §5 for topology, `database-design.md` §3.10 for the dedupe log. Message envelope:
 
 ```jsonc
 {
@@ -646,10 +650,11 @@ This service does **not** emit any outbound events to anyone in this milestone.
 | `IdempotencyConflict`             | 409  | shared        |
 | `InvalidStatusTransition`         | 409  | orders        |
 | `CancellationWindowExpired`       | 409  | orders        |
-| `OrderNotReady`                   | 409  | deliveries    |
-| `OrderAlreadyHasActiveDelivery`   | 409  | deliveries    |
-| `NoEligibleAgents`                | 409  | deliveries    |
-| `MaxReassignmentAttemptsReached`  | 409  | deliveries    |
+| `OrderNotReady`                   | 409  | agents        |
+| `OrderAlreadyAssigned`            | 409  | agents        |
+| `NoEligibleAgents`                | 409  | agents        |
+| `MaxReassignmentAttemptsReached`  | 409  | agents        |
+| `OfferExpired`                    | 409  | agents        |
 | `AgentInActiveDelivery`           | 409  | agents        |
 | `NotOnline`                       | 409  | agents        |
 | `InsufficientBalance`             | 409  | finance       |

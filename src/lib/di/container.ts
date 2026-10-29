@@ -12,6 +12,11 @@ import {OrderService} from "../../app/order/service/order.service";
 import {OrderController} from "../../app/order/controller/order.controller";
 import {OrderEventsController} from "../../app/order/controller/order-events.controller";
 import {registerOrderCoreEventHandlers} from "../../app/order/order.events";
+import {paymentProviderRegistry} from "../payments/init";
+import {PaymentService} from "../../app/payment/service/payment.service";
+import {PaymentWebhookService} from "../../app/payment/service/payment-webhook.service";
+import {PaymentController} from "../../app/payment/controller/payment.controller";
+import {WebhookController} from "../../app/payment/controller/webhook.controller";
 
 // Infrastructure
 container.registerSingleton<Logger>(TOKENS.Logger, Logger);
@@ -27,5 +32,12 @@ container.registerSingleton(TOKENS.OrderService, OrderService);
 container.registerSingleton(TOKENS.OrderController, OrderController);
 container.registerSingleton(TOKENS.OrderEventsController, OrderEventsController);
 registerOrderCoreEventHandlers(container.resolve(TOKENS.OrderEventsController));
+
+// Payment module
+container.registerInstance(TOKENS.PaymentProviderRegistry, paymentProviderRegistry);
+container.registerSingleton(TOKENS.PaymentService, PaymentService);
+container.registerSingleton(TOKENS.PaymentWebhookService, PaymentWebhookService);
+container.registerSingleton(TOKENS.PaymentController, PaymentController);
+container.registerSingleton(TOKENS.WebhookController, WebhookController);
 
 export {container};

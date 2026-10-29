@@ -19,6 +19,24 @@ export interface CreateOrderItemInput {
 export interface PlaceOrderResult {
     order: Order;
     items: OrderItem[];
+    // Set only when paymentMethod is 'online' — the payment module is invoked inline
+    // from placeOrder() per product decision (no separate "first init" call; see
+    // PaymentService.initForOrder in app/payment).
+    paymentInit?: PaymentInitSummary;
+}
+
+export interface PaymentInitSummary {
+    redirectUrl: string;
+    sessionId: string;
+    expiresAt: string;
+}
+
+// The composite PK of the partitioned `orders` table — for callers (e.g. the payment
+// reconciler) that only hold this pair via another table's denormalized order
+// reference, not the public_id normal callers use.
+export interface OrderCompositeId {
+    id: number;
+    createdAt: Date;
 }
 
 export interface GetOrderResult {

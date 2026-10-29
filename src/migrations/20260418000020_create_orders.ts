@@ -62,6 +62,8 @@ export async function up(knex: Knex): Promise<void> {
         -- supports GET /agents/tasks?status=
         CREATE INDEX idx_orders_delivery_agent_id_status ON orders (delivery_agent_id, status) WHERE delivery_agent_id IS NOT NULL;
 
+        CREATE INDEX idx_orders_pending_payment_created_at ON orders (created_at) WHERE status = 'pending_payment';
+
         -- Catch-all for any row whose created_at falls outside the pre-created monthly
         -- range (clock skew, backfills). ensureOrderMonthPartitions keeps the next 12
         -- months pre-created, so this should stay empty in normal operation.

@@ -18,8 +18,7 @@ order-service/
 │   ├── business-logic/
 │   │   ├── orders.md
 │   │   ├── payments.md
-│   │   ├── deliveries.md
-│   │   ├── agents.md
+│   │   ├── agents.md                 # presence, assignment/offer/accept, delivery status, earnings — no separate deliveries.md
 │   │   ├── restaurant-finance.md
 │   │   └── rbac.md
 │   ├── database-design.md
@@ -68,33 +67,22 @@ order-service/
     │   │   ├── errors.ts
     │   │   └── routes.ts
     │   │
-    │   ├── delivery/
-    │   │   ├── controller/delivery.controller.ts
-    │   │   ├── service/delivery.service.ts
-    │   │   ├── service/assignment.service.ts          # auto + manual + reassign logic
-    │   │   ├── repository/delivery.repo.ts
-    │   │   ├── entity/delivery.entity.ts
-    │   │   ├── dto/delivery.request.dto.ts
-    │   │   ├── dto/delivery.response.dto.ts
-    │   │   ├── enums.ts
-    │   │   ├── errors.ts
-    │   │   └── routes.ts
-    │   │
-    │   ├── agent/
-    │   │   ├── controller/agent.controller.ts
-    │   │   ├── controller/presence.controller.ts
-    │   │   ├── service/agent.service.ts
-    │   │   ├── service/presence.service.ts
+    │   ├── agent/                     # owns presence, assignment, AND delivery-status endpoints —
+    │   │   │                          # no separate `delivery/` module: there's no `deliveries` table to split off
+    │   │   ├── controller/agent.controller.ts          # presence, tasks, earnings
+    │   │   ├── controller/delivery.controller.ts       # /orders/:id/delivery/* (assign/reassign/accept/decline/status)
+    │   │   ├── service/presence.service.ts             # Redis-only online/offline/ping
+    │   │   ├── service/assignment.service.ts           # auto + manual assignment; Redis geo scan around the branch
+    │   │   ├── service/delivery.service.ts              # accept/decline/reassign/status; operates on `orders`, not a delivery entity
     │   │   ├── service/earning.service.ts
-    │   │   ├── repository/agent-presence.repo.ts
-    │   │   ├── repository/agent-earning.repo.ts
-    │   │   ├── entity/agent-presence.entity.ts
+    │   │   ├── repository/agent-earning.repo.ts         # the only table this module owns
     │   │   ├── entity/agent-earning.entity.ts
     │   │   ├── dto/presence.request.dto.ts
-    │   │   ├── dto/agent.response.dto.ts
+    │   │   ├── dto/delivery.request.dto.ts
+    │   │   ├── dto/agent.response.dto.ts                # DeliveryTaskResponseDTO, AgentEarningsResponseDTO
     │   │   ├── enums.ts
     │   │   ├── errors.ts
-    │   │   └── routes.ts
+    │   │   └── routes.ts                                 # mounts /agents/* and /orders/:id/delivery/*
     │   │
     │   └── restaurant-finance/
     │       ├── controller/finance.controller.ts
@@ -151,7 +139,7 @@ order-service/
     │   ├── idempotency/
     │   │   ├── idempotency.ts       # middleware (Redis + DB fallback)
     │   │   └── idempotency-store.ts # the DB-backed durable store
-    │   ├── jobs/                    # NEW: background workers (Phase 7 only)
+    │   ├── jobs/                    # NEW: background workers (Phase 5 only)
     │   │   └── archival.worker.ts   # nightly: moves rows older than current year to archive cluster
     │   ├── knex/
     │   │   ├── knex.ts              # db(region) → Knex (hot); dbArchive(region) (archive cluster)
@@ -200,9 +188,8 @@ order-service/
         ├── 20260418000040_create_payment_sessions.ts
         ├── 20260418000050_create_transactions.ts
         ├── 20260418000060_create_restaurant_balances.ts
-        ├── 20260418000070_create_deliveries.ts
-        ├── 20260418000080_create_agent_presence.ts
         ├── 20260418000090_create_agent_earnings.ts
+        # (no create_deliveries or create_agent_presence migration — neither table exists)
         ├── 20260418000100_create_idempotency_keys.ts
         ├── 20260418000110_create_payment_webhook_events.ts
         # (no core_inbound_events migration — dedupe is Redis SETNX)

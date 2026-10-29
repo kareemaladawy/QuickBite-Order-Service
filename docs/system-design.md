@@ -91,7 +91,7 @@ A customer who has ordered in multiple countries is rare; we don't optimize for 
 
 ### What lives outside shards
 
-- `payment_providers` table — small, replicated to every shard.
+- `payment_providers` table — same schema on every shard, but seed data is region-conditional (today: `kashier` seeded only in `eg`). COD is a payment method, not a row in this table.
 - Migrations — same code runs against every shard cluster.
 - The Kashier provider account — a single tenant in Kashier (or one per region — TBD per Kashier contract).
 
@@ -124,9 +124,9 @@ For these, we **also** publish via WebSocket on state change so clients don't ac
 
 `idempotency:{METHOD}:{path}:{key}` — 24h TTL. Backed by `idempotency_keys` table for durability on the critical paths.
 
-### Layer D — Agent presence cache
+### Layer D — Agent presence (Redis-only, no Postgres mirror)
 
-`presence:<region>:<agentId>` — written on `POST /agents/presence/ping` (write-through to Redis + Postgres). Auto-assignment reads the geo set from Redis (`GEOADD presence:geo:<region>`) instead of Postgres for the hot scan.
+`presence:geo:<region>` (a Redis geo set, `GEOADD`/`GEOSEARCH`) plus `presence:meta:<region>:<agentId>` (last-seen timestamp), both written on `POST /agents/presence/ping` / `/online`. There is no `agent_presence` table — presence is only ever needed for the last ~5 minutes (`PRESENCE_STALE_SEC`), not as a durable record, so Redis is the sole source of truth and keys are left to expire naturally. Auto-assignment `GEOSEARCH`es this set around the **branch's** lat/lng (not the agent's own last pickup) within `ASSIGNMENT_RADIUS_METERS`, filtering out any candidate whose last-seen timestamp is older than the cutoff.
 
 ### Layer E — WebSocket fan-out (socket.io Redis adapter)
 
@@ -346,7 +346,7 @@ WS workers use **socket.io** with the `@socket.io/redis-adapter`. Any worker cal
 
 Money paths are wrapped in `db.transaction()` with `SELECT ... FOR UPDATE` on `restaurant_balances` rows where they participate. Specifically:
 
-- `delivery.delivered`:
+- order `status → 'delivered'` (no separate delivery entity — this is an `orders` status transition):
   - Lock `restaurant_balances` row.
   - Insert `transactions(type='charge'|'cod_collection', status='succeeded')` if not already.
   - Insert `transactions(type='commission', status='succeeded')` (platform cut).

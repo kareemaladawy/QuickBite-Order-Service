@@ -14,3 +14,7 @@ export function toMs(value: number, unit: TimeUnit): number {
 export function toSeconds(value: number, unit: TimeUnit): number {
     return toMs(value, unit) / 1000;
 }
+
+export function addMs(date: Date, ms: number): Date {
+    return new Date(date.getTime() + ms);
+}

@@ -16,7 +16,7 @@ References:
 | ----------------------------------------------- | ------------------------------------- |
 | `POST /payments/init`                           | customer (idempotent, strict)         |
 | `POST /payments/webhook/{provider}`             | none (HMAC verified)                  |
-| `GET /payments/{paymentId}`                     | system_admin (or restaurant owner)    |
+| `GET /restaurants/{restaurantId}/payments/{paymentId}` | system_admin (or restaurant owner, own restaurant) |
 | `POST /payments/{paymentId}/refund`             | system_admin                          |
 
 `{paymentId}` here is the `transactions.id` of a `charge` row (we call this a "payment" in the public API to avoid leaking ledger semantics).
@@ -95,11 +95,12 @@ Header: `Idempotency-Key` (strict).
 
 ---
 
-## 4. GET /payments/{paymentId}
+## 4. GET /restaurants/{restaurantId}/payments/{paymentId}
 
-- Authorization:
-  - `system_admin`: always.
-  - Restaurant owner: only if the transaction belongs to one of their orders.
+- Authorization is middleware-only, enforced before the handler runs:
+  - `requireRestaurantMember("restaurantId")` — `system_admin` always passes; a `restaurant_user` passes only if `restaurantId` matches their own.
+  - `rbac({resource: "payments", action: "read"})` — checks the `payments:read` permission itself.
+- `PaymentService.getById` does not take an actor or run any role/ownership check; it only verifies the looked-up transaction's order actually belongs to `restaurantId` (a data check, not an authorization decision) and 404s otherwise. A transaction with no order link (e.g. a future payout) isn't reachable via this route — see §13 of the root CLAUDE.md, payouts land with the restaurant-finance module.
 - Returns a `PaymentResponseDTO` with: id, orderId, type, method, provider, amount/currency, status, providerReferenceId, timestamps, refunds (if any).
 
 ---
@@ -133,7 +134,7 @@ Header: `Idempotency-Key` (strict).
 | ----------------------------------- | ------------------------------------------------------- |
 | `POST /payments/init`               | `customer` (own order)                                  |
 | `POST /payments/webhook/{provider}` | none (signature required)                               |
-| `GET /payments/{id}`                | `system_admin`, `restaurant_user` (`payments:read`)     |
+| `GET /restaurants/{restaurantId}/payments/{id}` | `system_admin`, `restaurant_user` (`payments:read`, own restaurant) |
 | `POST /payments/{id}/refund`        | `system_admin`                                          |
 
 Seed permissions: `payments:read`. Mapped only to `owner`.
@@ -158,6 +159,7 @@ Seed permissions: `payments:read`. Mapped only to `owner`.
 | Kashier webhook spike of duplicates      | Kashier retries on slow webhook handler            | check handler latency; HMAC + unique constraint already de-dup |
 | Webhook signature mismatch               | secret rotation drift                              | update `KASHIER_WEBHOOK_SECRET`; replay `payment_webhook_events` not yet processed |
 | `transactions` insert blocks             | row lock on `restaurant_balances`                  | high contention — investigate concurrent payouts vs deliveries on the same restaurant |
+| Order stuck in `pending_payment` with a `succeeded` charge | `markPlacedBySystem` failed/crashed after the charge committed in `handleCapture` | background payment reconciler (`lib/jobs/payment-reconciler.ts`) retries the `pending_payment -> placed` transition once the charge is `PAYMENT_RECONCILER_GRACE_SEC` old; the pending-payment sweep excludes these orders so it can't wrongly cancel an already-paid order |
 
 ---
 

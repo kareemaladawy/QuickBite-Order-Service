@@ -64,11 +64,12 @@ If the cache lookup fails AND core-client is down → serve **stale** cache for 
 | `PATCH /orders/{id}/status` cancelled        | `orders:cancel`               | Or customer (window) or admin          |
 | `POST /payments/init`                        | (customer + own order)        |                                        |
 | `POST /payments/webhook/{provider}`          | none (HMAC)                   |                                        |
-| `GET /payments/{id}`                         | `payments:read` or admin      |                                        |
+| `GET /restaurants/{restaurantId}/payments/{id}` | `payments:read` or admin   | + `requireRestaurantMember`            |
 | `POST /payments/{id}/refund`                 | system_admin only             |                                        |
-| `POST /deliveries/assign/{orderId}`          | `deliveries:assign` or admin  |                                        |
-| `POST /deliveries/reassign/{orderId}`        | `deliveries:assign` or admin  |                                        |
-| `PATCH /deliveries/{id}/status`              | (delivery_agent + ownership)  | Service checks `delivery.agent_id`     |
+| `POST /orders/{orderId}/delivery/assign`     | `deliveries:assign` or admin  | Manual override; auto path is system-triggered |
+| `POST /orders/{orderId}/delivery/reassign`   | `deliveries:assign` or admin  |                                        |
+| `POST /orders/{orderId}/delivery/accept` · `/decline` | (delivery_agent + offer ownership) | Service checks the Redis offer, not a table row |
+| `PATCH /orders/{orderId}/delivery/status`    | (delivery_agent + ownership)  | Service checks `orders.delivery_agent_id` |
 | `POST /agents/presence/*`                    | (delivery_agent role)         |                                        |
 | `GET /agents/tasks`                          | (delivery_agent role + own)   |                                        |
 | `GET /agents/earnings`                       | (delivery_agent role + own)   |                                        |

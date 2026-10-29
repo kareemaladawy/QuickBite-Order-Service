@@ -152,7 +152,7 @@ class OrderItemResponseDTO {
 
 **Path params**: `publicId` (UUID).
 
-**Auth**: customer (own), restaurant_user (member), system_admin.
+**Auth**: customer (own) or system_admin. Restaurant actors use 1.2b below instead — this path has no branch/restaurant param, so a restaurant_user is always rejected.
 
 **Response 200**
 
@@ -178,6 +178,16 @@ class DeliverySummaryResponseDTO {
   deliveredAt?: string;
 }
 ```
+
+---
+
+### 1.2b GET /api/restaurants/{restaurantId}/branches/{branchId}/orders/{publicId}
+
+Same response shape as 1.2.
+
+**Path params**: `restaurantId`, `branchId`, `publicId` (UUID).
+
+**Auth**: restaurant_user (member of `branchId` or owner of `restaurantId`) or system_admin — enforced by `requireRestaurantMember('restaurantId')` + `requireBranchAccess('branchId')` before the handler runs.
 
 ---
 
@@ -220,7 +230,7 @@ class OrderSummaryResponseDTO {
 
 **Headers**: `Idempotency-Key` (strict).
 
-**Auth**: depends on requested target — restaurant_user (with the right permission) for accept/reject/preparing/ready/cancel; customer for cancel-within-window; admin always.
+**Auth**: customer (cancel-within-window, must own the order) or system_admin (any target). Restaurant actors use 1.5b below instead — this path has no branch/restaurant param, so a restaurant_user is always rejected.
 
 **Request body**
 
@@ -243,6 +253,18 @@ class OrderStatusResponseDTO {
   updatedAt: string;
 }
 ```
+
+---
+
+### 1.5b PATCH /api/restaurants/{restaurantId}/branches/{branchId}/orders/{orderId}/status
+
+Same request body and response shape as 1.5 — accept/reject/preparing/ready/cancel.
+
+**Path**: `restaurantId`, `branchId`, `orderId` (publicId).
+
+**Headers**: `Idempotency-Key` (strict).
+
+**Auth**: restaurant_user (member of `branchId` or owner of `restaurantId`) or system_admin — enforced by `requireRestaurantMember('restaurantId')` + `requireBranchAccess('branchId')` before the handler runs. Which target status is actually reachable from the order's current status is still `assertTransition()`'s call, not these middlewares'.
 
 **Errors**
 

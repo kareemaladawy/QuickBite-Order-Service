@@ -100,9 +100,15 @@ This lives in this module and is **the** place order commission is calculated �
 
 ```
 on order delivered:
+  if payment_method === 'cod':
+    insert transactions(type='cod_collection', status='succeeded', amount=order.total,
+                         src_acc_id=customer, dst_acc_id=restaurantOwner)
+    # no prior pending row exists — this is the first and only cod_collection row for the order
   commission    = floor(order.subtotal × branch.commission_rate)
   delta_balance = order.subtotal - commission
 ```
+
+For online orders the `charge` row was already written at capture (before `delivered` — see `payments.md` §3), so only the commission leg runs. For COD orders, this is the **only** point a `cod_collection` row is ever written — placement (§2 of `orders.md`) writes no transaction at all.
 
 Writes the `transactions(type='commission')` row and credits `restaurant_balances.balance += delta_balance`, both inside the caller's trx (per CLAUDE.md §8: the service that opens the trx passes it through; this is a cross-module *service* call, never a repo reach-through).
 

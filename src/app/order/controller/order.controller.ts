@@ -9,12 +9,11 @@ import { OrderService } from "../service/order.service";
 import { CreateOrderRequestDTO, UpdateOrderStatusRequestDTO } from "../dto/order.request.dto";
 import { OrderResponseDTO, OrderStatusResponseDTO, OrderSummaryResponseDTO } from "../dto/order.response.dto";
 import { OrderStatus } from "../enums";
-import { RegionNotResolvedError } from "../../../lib/sharding/errors";
 import { MissingIdempotencyKeyError } from "../errors";
 
 @injectable()
 export class OrderController {
-    constructor(@inject(TOKENS.OrderService) private readonly orderService: OrderService) {}
+    constructor(@inject(TOKENS.OrderService) private readonly orderService: OrderService) { }
 
     placeOrder = async (req: Request, res: Response, next: NextFunction) => {
         try {
@@ -39,9 +38,21 @@ export class OrderController {
 
     getOrder = async (req: Request, res: Response, next: NextFunction) => {
         try {
-            if (!req.region || req.region === "all") throw RegionNotResolvedError;
+            const { order, items } = await this.orderService.getOrder(String(req.params.orderId), req.region!, req.user!);
+            sendSuccess(res, OrderResponseDTO.from(order, items));
+        } catch (error) {
+            next(error);
+        }
+    };
 
-            const { order, items } = await this.orderService.getOrder(String(req.params.orderId), req.region, req.user!);
+    getRestaurantOrder = async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const { order, items } = await this.orderService.getRestaurantOrder(
+                String(req.params.orderId),
+                req.region!,
+                Number(req.params.restaurantId),
+                Number(req.params.branchId),
+            );
             sendSuccess(res, OrderResponseDTO.from(order, items));
         } catch (error) {
             next(error);
@@ -50,10 +61,8 @@ export class OrderController {
 
     listCustomerOrders = async (req: Request, res: Response, next: NextFunction) => {
         try {
-            if (!req.region || req.region === "all") throw RegionNotResolvedError;
-
             const pagination = parsePaginationQuery(req.query as Record<string, unknown>, ["createdAt"]);
-            const orders = await this.orderService.listCustomerOrders(req.user!.userId, req.region, pagination);
+            const orders = await this.orderService.listCustomerOrders(req.user!.userId, req.region!, pagination);
             const { data, meta } = buildPaginationResult(orders, pagination.limit, pagination.sortBy);
 
             sendPaginated(res, data.map(OrderSummaryResponseDTO.from), meta);
@@ -64,8 +73,6 @@ export class OrderController {
 
     listRestaurantOrders = async (req: Request, res: Response, next: NextFunction) => {
         try {
-            if (!req.region || req.region === "all") throw RegionNotResolvedError;
-
             const branchId = Number(req.params.branchId);
 
             const status = typeof req.query.status === "string" ? (req.query.status as OrderStatus) : undefined;
@@ -75,7 +82,7 @@ export class OrderController {
             const pagination = parsePaginationQuery(req.query as Record<string, unknown>, ["createdAt"]);
             const orders = await this.orderService.listRestaurantOrders(
                 branchId,
-                req.region,
+                req.region!,
                 { status, from, to },
                 pagination,
             );
@@ -89,10 +96,31 @@ export class OrderController {
 
     updateStatus = async (req: Request, res: Response, next: NextFunction) => {
         try {
-            if (!req.region || req.region === "all") throw RegionNotResolvedError;
-
             const data = await validateBody(UpdateOrderStatusRequestDTO, req.body);
-            const order = await this.orderService.updateStatus(String(req.params.orderId), req.region, req.user!, data);
+            const order = await this.orderService.updateStatus(
+                String(req.params.orderId),
+                req.region!,
+                req.user!,
+                data
+            );
+
+            sendSuccess(res, OrderStatusResponseDTO.from(order));
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    updateRestaurantOrderStatus = async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const data = await validateBody(UpdateOrderStatusRequestDTO, req.body);
+            const order = await this.orderService.updateRestaurantOrderStatus(
+                String(req.params.orderId),
+                req.region!,
+                Number(req.params.restaurantId),
+                Number(req.params.branchId),
+                req.user!,
+                data
+            );
 
             sendSuccess(res, OrderStatusResponseDTO.from(order));
         } catch (error) {

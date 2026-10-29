@@ -39,7 +39,7 @@ Responsible for the customer-facing order placement, the order header lifecycle,
 
 ### Transition rules
 
-- Single endpoint `PATCH /orders/{orderId}/status` updates restaurant-side state. Body: `{ status }`. Service validates the requested target is **legal from current status** and **allowed for the actor**.
+- `PATCH /orders/{orderId}/status` (customer/admin) and `PATCH /restaurants/{restaurantId}/branches/{branchId}/orders/{orderId}/status` (restaurant/admin) both update order state through the same status machine. Body: `{ status }`. Service validates the requested target is **legal from current status** and **allowed for the actor**.
 - Forbidden transitions return **409**.
 - Each transition stamps the corresponding `<verb>_at` column inside the same trx.
 - Each transition publishes a WebSocket event to `customer:<id>`, `branch:<id>`, and (where relevant) `agent:<id>`.
@@ -88,7 +88,7 @@ Header: `Idempotency-Key` (required, `idempotency({strict: true})` middleware).
 6. **In one trx on the branch's region**:
    - Insert `orders` with `status = paymentMethod === 'online' ? 'pending_payment' : 'placed'`.
    - Insert `order_items` (one INSERT … VALUES … with multiple rows).
-   - For COD: insert `transactions(type='cod_collection', status='pending', amount=total, src_acc_id=customer, dst_acc_id=restaurantOwner)`.
+   - No `transactions` row is written for COD at placement — no money has moved yet, and there's nothing to reconcile if the order never reaches `delivered`. The `cod_collection` row is written only on `delivered` (see §7, §10, and `restaurant-finance.md` §7).
    - Decrement product stock via `core-client.reserveStock(branchId, items)` — **out-of-trx**, after commit. If reserve fails, we void the order (status=`cancelled`, reason=`out_of_stock_post_commit`). This is acceptable: stock was last verified seconds ago.
 7. **Commit**.
 8. For `online`: hand off to payment service to create a Kashier session (separate endpoint `POST /payments/init`, or auto-trigger from the same controller — see §3).
@@ -114,17 +114,19 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 
 ---
 
-## 4. GET /orders/{orderId}
+## 4. GET /orders/{orderId} & GET /restaurants/{restaurantId}/branches/{branchId}/orders/{orderId}
 
 - `orderId` here is the **public_id** (UUID).
 - Lookup is by `public_id` index, single shard.
 - Region resolution: same priority (`?region=` / `X-Region` / cookie). A customer reading an order in their own country passes `X-Region` (set by the gateway) or the server derives it from the order's `public_id` only if we ever add a region prefix — today we require the region to be supplied.
-- Authorization: customer == `order.customer_id`; restaurant user must own the restaurant or be a member of `branch_id`; admin sees all.
+- Two routes, same read:
+  - `GET /orders/{orderId}` — customer (must own the order) or `system_admin`. No restaurant/branch param, so ownership is checked once the order is loaded.
+  - `GET /restaurants/{restaurantId}/branches/{branchId}/orders/{orderId}` — `restaurant_user` (member of `branchId` or owner of `restaurantId`) or `system_admin`, enforced by `requireRestaurantMember`/`requireBranchAccess` before the handler runs; the service only checks the order actually belongs to that branch.
 - Response includes:
   - Order header (DTO).
   - Items.
   - Latest delivery (if any).
-  - Payment summary (status of latest `transaction(type='charge'|'cod_collection')`).
+  - Payment summary: status of the latest `transaction(type='charge'|'cod_collection')` if one exists, else derived from `order.status` — a COD order has no transaction row at all before `delivered`.
 - All in **one** repository call (single SQL with joins). No N+1.
 
 ---
@@ -149,17 +151,17 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 
 ---
 
-## 7. PATCH /orders/{orderId}/status
+## 7. PATCH /orders/{orderId}/status & PATCH /restaurants/{restaurantId}/branches/{branchId}/orders/{orderId}/status
 
-- Single endpoint. The server inspects `currentStatus` and the actor's role to decide if the requested transition is allowed.
+- Two routes, one status machine. The customer/admin route carries no branch/restaurant param (ownership is checked once the order is loaded); the restaurant/admin route is nested under `restaurantId`/`branchId` so `requireRestaurantMember` + `requireBranchAccess` reject a caller who isn't a member before the handler runs. Either way, the server then inspects `currentStatus` and the actor's role to decide if the requested transition is allowed.
 - Each transition uses a small helper `assertTransition(from, to, actorContext)` that throws `InvalidStatusTransition` otherwise.
 - Side effects per transition:
   - `accepted` → stamp `accepted_at`; WS to customer.
-  - `rejected` → stamp `rejected_at`; trigger refund or void COD; WS to customer.
+  - `rejected` → stamp `rejected_at`; trigger refund (online, if captured) — no-op for COD, since no money has moved and no transaction row exists yet; WS to customer.
   - `preparing` → stamp; WS.
   - `ready` → stamp; **enqueue auto-assignment** (delivery service).
   - `assigned` → only system writes this status (the Agents module's assignment service, on accept). Manual admin override goes through `POST /orders/{orderId}/delivery/assign`, not this endpoint.
-  - `cancelled` → stamp `cancelled_at`, body must include `reason`. If online & captured → trigger refund. If COD → void the pending `cod_collection` transaction.
+  - `cancelled` → stamp `cancelled_at`, body must include `reason`. If online & captured → trigger refund. If COD → no-op (no transaction row exists before `delivered`, so there's nothing to reverse).
 
 ---
 
@@ -168,7 +170,7 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 1. `total = subtotal + delivery_fee + service_fee` always.
 2. `commission ≤ subtotal`.
 3. The status sequence is monotonic (no jumping back).
-4. `delivered_at IS NOT NULL` ⇒ all dependent rows: `transactions(type='charge', status='succeeded')` exists, `restaurant_balances` updated, `agent_earnings` row exists.
+4. `delivered_at IS NOT NULL` ⇒ all dependent rows: `transactions(type='charge'|'cod_collection', status='succeeded')` exists, `restaurant_balances` updated, `agent_earnings` row exists.
 5. `pending_payment` orders older than 15 min are cancelled by a background sweep.
 6. A customer cannot read another customer's order, even with the public_id.
 7. A restaurant user cannot read orders for branches they aren't a member of (unless owner).
@@ -186,7 +188,7 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 ## 10. Refund handling on cancellation
 
 - If the order was online and a `transaction(type='charge', status='succeeded')` exists → call payment service's `refund(orderId, amount=total)`. This is async (Kashier processes; we get a webhook).
-- If COD with no money collected yet → flip the pending `cod_collection` to `failed` and write `transaction(type='adjustment', amount=0, ...)` for the audit trail (no money moved).
+- A COD order cancelled before `delivered` has no `transactions` row at all (none is written until delivery — see §2 and §7), so there is nothing to reverse and no audit row is written.
 
 ---
 
@@ -195,12 +197,14 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 | Action                                      | Roles allowed                                                     |
 | ------------------------------------------- | ------------------------------------------------------------------ |
 | `POST /orders`                              | `customer`                                                         |
-| `GET /orders/{id}`                          | `customer` (own), `restaurant_user` (member of branch), `system_admin` |
+| `GET /orders/{id}`                          | `customer` (own), `system_admin`                                   |
+| `GET /restaurants/{restaurantId}/branches/{branchId}/orders/{id}` | `restaurant_user` (member of branch), `system_admin` |
 | `GET /customer/orders`                      | `customer`                                                         |
 | `GET /restaurant/orders/{branchId}`         | `restaurant_user` (`orders:read`), `system_admin`                  |
-| `PATCH /orders/{id}/status` → accept/reject | `restaurant_user` with `orders:accept`                             |
-| `PATCH /orders/{id}/status` → preparing/ready | `restaurant_user` with `orders:update`                           |
-| `PATCH /orders/{id}/status` → cancelled     | `customer` (own, window), `restaurant_user` (`orders:cancel`), `system_admin` |
+| `PATCH /orders/{id}/status` → cancelled     | `customer` (own, window), `system_admin` |
+| `PATCH /restaurants/{restaurantId}/branches/{branchId}/orders/{id}/status` → accept/reject | `restaurant_user` with `orders:accept` (member of `branchId`), `system_admin` |
+| `PATCH /restaurants/{restaurantId}/branches/{branchId}/orders/{id}/status` → preparing/ready | `restaurant_user` with `orders:update` (member of `branchId`), `system_admin` |
+| `PATCH /restaurants/{restaurantId}/branches/{branchId}/orders/{id}/status` → cancelled | `restaurant_user` with `orders:cancel` (member of `branchId`), `system_admin` |
 
 Permission seed (added to core's RBAC seed migration):
 

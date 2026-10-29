@@ -1,4 +1,5 @@
 import { injectable } from "tsyringe";
+import type { Knex } from "knex";
 import { v4 as uuidv4 } from "uuid";
 import { container } from "../../../lib/di/container";
 import { TOKENS } from "../../../lib/di/tokens";
@@ -266,11 +267,37 @@ export class OrderService {
         }
     };
 
+    // GET /orders/:orderId — customer (own) + system_admin. No branch/restaurant param
+    // here, so ownership can only be confirmed once the order is loaded.
     getOrder = async (publicId: string, region: string, actor: JWTPayload): Promise<GetOrderResult> => {
         const order = await findOrderByPublicId(publicId, db(region));
         if (!order) throw OrderNotFoundError;
 
-        this.assertCanView(order, actor);
+        if (actor.role !== "system_admin" && !order.isOwnedBy(actor.userId)) {
+            throw ForbiddenOrderAccessError;
+        }
+
+        const items = await findItemsByOrderIds([order.id], db(region));
+        return { order, items };
+    };
+
+    // GET /restaurants/:restaurantId/branches/:branchId/orders/:orderId —
+    // restaurant_user + system_admin. requireRestaurantMember('restaurantId') and
+    // requireBranchAccess('branchId') (routes.ts) already confirmed the caller may act
+    // for that restaurant/branch; this is purely a data check — does this order
+    // actually belong to that branch — not an authorization decision.
+    getRestaurantOrder = async (
+        publicId: string,
+        region: string,
+        restaurantId: number,
+        branchId: number,
+    ): Promise<GetOrderResult> => {
+        const order = await findOrderByPublicId(publicId, db(region));
+        if (!order) throw OrderNotFoundError;
+
+        if (order.restaurantId !== restaurantId || order.branchId !== branchId) {
+            throw OrderNotFoundError;
+        }
 
         const items = await findItemsByOrderIds([order.id], db(region));
         return { order, items };
@@ -293,6 +320,10 @@ export class OrderService {
         return findOrdersByBranch(branchId, filters, pagination, db(region));
     };
 
+    // PATCH /orders/:orderId/status — customer self-cancel + system_admin. There is no
+    // route param that scopes this to a branch/restaurant, so unlike
+    // updateRestaurantOrderStatus below, ownership can't be checked by middleware alone:
+    // a customer can only be confirmed to own the order once it's loaded.
     updateStatus = async (
         publicId: string,
         region: string,
@@ -303,14 +334,57 @@ export class OrderService {
         const order = await findOrderByPublicId(publicId, conn);
         if (!order) throw OrderNotFoundError;
 
-        this.assertCanView(order, actor);
+        let actorType: OrderActorType;
+        if (actor.role === "system_admin") {
+            actorType = OrderActorType.ADMIN;
+        } else if (order.isOwnedBy(actor.userId)) {
+            actorType = OrderActorType.CUSTOMER;
+        } else {
+            throw ForbiddenOrderAccessError;
+        }
 
+        return this.applyStatusTransition(order, region, conn, actorType, data);
+    };
+
+    // PATCH /restaurants/:restaurantId/branches/:branchId/orders/:orderId/status —
+    // restaurant_user + system_admin. requireRestaurantMember('restaurantId') and
+    // requireBranchAccess('branchId') (routes.ts) already confirmed the caller may act
+    // for that restaurant/branch; all that's left here is a data check — does this
+    // order actually belong to that branch — not an authorization decision.
+    updateRestaurantOrderStatus = async (
+        publicId: string,
+        region: string,
+        restaurantId: number,
+        branchId: number,
+        actor: JWTPayload,
+        data: UpdateOrderStatusRequestDTO,
+    ): Promise<Order> => {
+        const conn = db(region);
+        const order = await findOrderByPublicId(publicId, conn);
+        if (!order) throw OrderNotFoundError;
+
+        if (order.restaurantId !== restaurantId || order.branchId !== branchId) {
+            throw OrderNotFoundError;
+        }
+
+        const actorType = actor.role === "system_admin" ? OrderActorType.ADMIN : OrderActorType.RESTAURANT;
+
+        return this.applyStatusTransition(order, region, conn, actorType, data);
+    };
+
+    private applyStatusTransition = async (
+        order: Order,
+        region: string,
+        conn: Knex,
+        actorType: OrderActorType,
+        data: UpdateOrderStatusRequestDTO,
+    ): Promise<Order> => {
         if (data.status === OrderStatus.CANCELLED && !data.reason) {
             throw MissingCancellationReasonError;
         }
 
         const actorContext: OrderActorContext = {
-            type: this.actorTypeFor(order, actor),
+            type: actorType,
             orderCreatedAt: order.createdAt,
             acceptedAt: order.acceptedAt,
         };
@@ -464,25 +538,6 @@ export class OrderService {
         // log line for ops to action manually instead.
         logger.warn("restaurant suspended — review its pending orders manually", { restaurantId });
     };
-
-    private actorTypeFor(order: Order, actor: JWTPayload): OrderActorContext["type"] {
-        if (actor.role === "system_admin") return OrderActorType.ADMIN;
-        if (actor.role === "restaurant_user") return OrderActorType.RESTAURANT;
-        if (actor.userId === order.customerId) return OrderActorType.CUSTOMER;
-        throw ForbiddenOrderAccessError;
-    }
-
-    private assertCanView(order: Order, actor: JWTPayload): void {
-        if (actor.role === "system_admin") return;
-        if (actor.role === "restaurant_user") {
-            const isOwner = actor.restaurantRole === "owner" && actor.restaurantId === order.restaurantId;
-            const isBranchMember = (actor.branchIds ?? []).includes(order.branchId);
-            if (isOwner || isBranchMember) return;
-            throw ForbiddenOrderAccessError;
-        }
-        if (order.isOwnedBy(actor.userId)) return;
-        throw ForbiddenOrderAccessError;
-    }
 
     // Resolved lazily (not constructor-injected) because the socket.io server is
     // registered on TOKENS.WsServer in server.ts *after* the DI container has already

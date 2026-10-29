@@ -56,12 +56,14 @@ If the cache lookup fails AND core-client is down → serve **stale** cache for 
 | Endpoint                                     | Required permission           | Notes                                  |
 | -------------------------------------------- | ----------------------------- | -------------------------------------- |
 | `POST /orders`                               | (customer role)               | Not RBAC — role gate                   |
-| `GET /orders/{id}`                           | varies (see Orders.md)        | Ownership in service                   |
+| `GET /orders/{id}`                           | (customer role, own order)    | `requireConcreteRegion`; ownership checked in service |
+| `GET /restaurants/{restId}/branches/{branchId}/orders/{id}` | `orders:read`  | `requireRestaurantMember` + `requireBranchAccess` |
 | `GET /customer/orders`                       | (customer role)               |                                        |
-| `GET /restaurant/orders`                     | `orders:read`                 | + `requireBranchAccess`                |
-| `PATCH /orders/{id}/status` accept/reject    | `orders:accept`               |                                        |
-| `PATCH /orders/{id}/status` preparing/ready  | `orders:update`               |                                        |
-| `PATCH /orders/{id}/status` cancelled        | `orders:cancel`               | Or customer (window) or admin          |
+| `GET /restaurant/orders/{branchId}`          | `orders:read`                 | + `requireBranchAccess`                |
+| `PATCH /orders/{id}/status` cancelled        | (customer role, own order) or admin | `requireConcreteRegion`; ownership checked in service |
+| `PATCH /restaurants/{restId}/branches/{branchId}/orders/{id}/status` accept/reject | `orders:accept` | `requireRestaurantMember` + `requireBranchAccess` |
+| `PATCH /restaurants/{restId}/branches/{branchId}/orders/{id}/status` preparing/ready | `orders:update` | `requireRestaurantMember` + `requireBranchAccess` |
+| `PATCH /restaurants/{restId}/branches/{branchId}/orders/{id}/status` cancelled | `orders:cancel` | `requireRestaurantMember` + `requireBranchAccess` |
 | `POST /payments/init`                        | (customer + own order)        |                                        |
 | `POST /payments/webhook/{provider}`          | none (HMAC)                   |                                        |
 | `GET /restaurants/{restaurantId}/payments/{id}` | `payments:read` or admin   | + `requireRestaurantMember`            |

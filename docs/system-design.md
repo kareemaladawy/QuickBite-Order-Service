@@ -272,9 +272,8 @@ client                  order-service                     Kashier
 
 ### COD flow
 
-- Order created with `payment_method='cod'`, status goes straight to `placed`.
-- A `transaction` row of type `cod_collection` with `status='pending'` is inserted at order creation.
-- On `delivery.delivered`, the transaction status flips to `succeeded`. Restaurant balance is updated as part of that same trx.
+- Order created with `payment_method='cod'`, status goes straight to `placed`. No `transaction` row is written at order creation — no money has moved yet.
+- On `delivery.delivered`, a `transaction` row of type `cod_collection`, `status='succeeded'` is inserted directly (not flipped from a prior pending row). Restaurant balance is updated as part of that same trx.
 
 ### Webhook security
 

@@ -22,3 +22,12 @@ export function requireRegion(req: Request, _res: Response, next: NextFunction) 
     if (!req.region) throw RegionNotResolvedError;
     next();
 }
+
+/**
+ * Like requireRegion, but also rejects "all" — for write/single-shard endpoints that
+ * must resolve to exactly one concrete region (not an admin fan-out read).
+ */
+export function requireConcreteRegion(req: Request, _res: Response, next: NextFunction) {
+    if (!req.region || req.region === "all") throw RegionNotResolvedError;
+    next();
+}

@@ -112,7 +112,7 @@ Header: `Idempotency-Key` (strict).
 - Validates: payment is a `charge`, status `succeeded`, not already fully refunded.
 - Inserts `transactions(type='refund', method=originalMethod, provider_id=originalProvider, status='pending', amount, currency, src_acc_id=NULL, dst_acc_id=customer)` with a fresh idempotency key.
 - Calls Kashier refund API (sync). On Kashier accept (HTTP 2xx) we keep `status='pending'` and wait for the webhook to flip it to `succeeded`.
-- For COD, a refund is mostly a bookkeeping operation; the cash never reached the platform. We still write a `refund` row for audit and adjust the restaurant balance if needed.
+- For COD, a refund only applies **after** `delivered` (a succeeded `cod_collection` row exists by then); the cash itself never passed through the platform, so we still write a `refund` row for audit and adjust the restaurant balance if needed, but no provider call is made. A COD order cancelled/rejected *before* `delivered` has no `transactions` row to refund at all (see `orders.md` §10).
 
 ---
 
@@ -120,9 +120,10 @@ Header: `Idempotency-Key` (strict).
 
 - All amounts are integer minor units (piasters/halalas).
 - `transactions.amount` is always **positive**. The direction is encoded by `(transaction_type, src_acc_id, dst_acc_id)`.
-- A successful order generates **two** linked transactions on `delivered`:
-  1. `charge` (online) or `cod_collection` — customer → restaurant.
-  2. `commission` — restaurant → SYSTEM (src=ownerId, dst=NULL).
+- A successful order generates two customer→restaurant / restaurant→SYSTEM transactions, written at different points depending on `payment_method`:
+  1. `charge` (online) — written at **capture** (the `payment.success` webhook, §3), long before `delivered`.
+     `cod_collection` (COD) — written only at **`delivered`** (never at placement, since no money has actually moved yet — see `orders.md` §2 and `restaurant-finance.md` §7). Both go customer → restaurant, `status='succeeded'`.
+  2. `commission` — restaurant → SYSTEM (src=ownerId, dst=NULL), written at `delivered` for both payment methods by `recordDeliverySettlement`.
 - A `payout` is restaurant → bank: src=NULL (system holds the funds), dst=ownerId. The corresponding negative effect on the restaurant balance happens in the same trx.
 - A `refund` is SYSTEM → customer (online) or a void with no money movement (cod): we still insert a `refund` row for the audit trail.
 

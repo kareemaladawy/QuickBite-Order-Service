@@ -306,7 +306,7 @@ No `deliveries` table. No `agent_presence` table.
    - `assign(orderId, agentId?)` — manual override, or delegates to `assignment.service.tryAssign`.
    - `updateStatus(orderId, agentId, toStatus)` — reuses the Phase 1 order-status machine; checks the caller is the assigned agent.
    - `reassign(orderId)` — clears `delivery_agent_id`, increments a `reassignment_attempts` counter column on `orders` (kept deliberately minimal — just a counter, not an audit table), re-invokes `tryAssign`; enforces `MAX_REASSIGNMENT_ATTEMPTS`.
-   - On `delivered`: inserts the `agent_earnings` row, flips a pending `cod_collection` transaction to `succeeded`, and calls **`finance.service.recordDeliverySettlement(orderId, trx)`** (Phase 4) inside the same trx it owns — commission calculation and the restaurant-balance credit are Phase 4's responsibility, not this phase's.
+   - On `delivered`: inserts the `agent_earnings` row, and calls **`finance.service.recordDeliverySettlement(orderId, trx)`** (Phase 4) inside the same trx it owns — Phase 4 is responsible for inserting the (COD-only) `cod_collection` transaction directly as `succeeded` (no pending row exists to flip — placement never wrote one), commission calculation, and the restaurant-balance credit.
 8. Controller + routes: `/agents/presence`, `/agents/tasks`, `/orders/:id/delivery` (assign / reassign / status).
 9. **Cross-module hook** (unchanged from the original plan): `order.service.updateStatus` for target `ready` enqueues `assignment.service.tryAssign(orderId)` in-process after commit.
 10. **WS wiring, done here**: `assignment.service` publishes `agent:<id>:task.assigned` on assignment; `delivery.service.updateStatus` publishes `customer:<id>` / `branch:<id>` `delivery.status_changed` on every transition; `presence.service.ping` publishes `customer:<id>:delivery.position` when the pinging agent has an active delivery. All via the Phase 0 WS publisher — no separate wiring phase follows this one.
@@ -320,7 +320,7 @@ No `deliveries` table. No `agent_presence` table.
 - Order moved to `ready` triggers assignment: nearest agent within `ASSIGNMENT_RADIUS_METERS` of the **branch's** lat/lng, with presence pinged within the last ~5 minutes, gets assigned; manual `agentId` override also works.
 - Agent flow `assigned → picked → delivered` works; only the assigned agent can advance it.
 - Going offline rejects if the agent is the active `delivery_agent_id` on an undelivered order.
-- On `delivered`: `agent_earnings` row exists; COD's pending `cod_collection` flips to `succeeded`; `finance.service.recordDeliverySettlement` is invoked and the balance/commission effects are verified in Phase 4's acceptance.
+- On `delivered`: `agent_earnings` row exists; `finance.service.recordDeliverySettlement` is invoked and inserts a `succeeded` `cod_collection` row for COD orders (there was never a pending one); the balance/commission effects are verified in Phase 4's acceptance.
 - Reassignment increments `reassignment_attempts`; `MAX_REASSIGNMENT_ATTEMPTS` enforced.
 - A customer subscribed to `customer:<id>` receives `delivery.status_changed` without polling; an agent subscribed to `agent:<id>` receives `task.assigned` on assignment.
 

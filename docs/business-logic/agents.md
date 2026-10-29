@@ -144,11 +144,10 @@ Anything else → 409 `InvalidStatusTransition`.
 In the same DB trx as the status flip:
 
 1. Insert `agent_earnings(agent_id, order_id, order_created_at, amount, currency)` — `earning = base_fee + per_km × distance_km` (env-configurable rate; today simply `branch.delivery_fee × agentShareRate`). Unique on `order_id` makes this idempotent.
-2. For online: ensure the `transactions(type='charge', status='succeeded')` exists (must, by design).
-3. For COD: flip `transactions(type='cod_collection')` from `pending` → `succeeded`.
-4. Call **`finance.service.recordDeliverySettlement(orderId, trx)`** (Restaurant Finance module), passing through the trx this service already owns. That call computes commission, writes the `transactions(type='commission')` row, and credits `restaurant_balances.balance` — **commission calculation is Restaurant Finance's responsibility, not this module's**; see `restaurant-finance.md` §7.
-5. Release the agent from `presence:busy:<region>`.
-6. (No outbound events; clients are notified via WebSocket.)
+2. For online: ensure the `transactions(type='charge', status='succeeded')` exists (must, by design — written at capture, long before `delivered`).
+3. Call **`finance.service.recordDeliverySettlement(orderId, trx)`** (Restaurant Finance module), passing through the trx this service already owns. That call inserts the `transactions(type='cod_collection', status='succeeded')` row for COD orders (there is no pending row to flip — placement never wrote one), computes commission, writes the `transactions(type='commission')` row, and credits `restaurant_balances.balance` — **all of this is Restaurant Finance's responsibility, not this module's**; see `restaurant-finance.md` §7.
+4. Release the agent from `presence:busy:<region>`.
+5. (No outbound events; clients are notified via WebSocket.)
 
 All in one trx, owned by this module's `delivery.service`, passed into `finance.service.recordDeliverySettlement`. Failure rolls back the whole thing — no partial settlement.
 

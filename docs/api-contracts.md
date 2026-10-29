@@ -204,9 +204,9 @@ class OrderSummaryResponseDTO {
 
 ---
 
-### 1.4 GET /api/restaurant/orders
+### 1.4 GET /api/restaurant/orders/:branchId
 
-**Query**: `branchId` (required), `status?`, `from?` (ISO), `to?` (ISO), pagination, filters.
+**Params**: `branchId` (required). **Query**: `status?`, `from?` (ISO), `to?` (ISO), pagination, filters.
 
 **Auth**: restaurant_user with `orders:read` + `requireBranchAccess('branchId')`.
 

@@ -10,7 +10,7 @@ import { CreateOrderRequestDTO, UpdateOrderStatusRequestDTO } from "../dto/order
 import { OrderResponseDTO, OrderStatusResponseDTO, OrderSummaryResponseDTO } from "../dto/order.response.dto";
 import { OrderStatus } from "../enums";
 import { RegionNotResolvedError } from "../../../lib/sharding/errors";
-import { BranchIdRequiredError, MissingIdempotencyKeyError } from "../errors";
+import { MissingIdempotencyKeyError } from "../errors";
 
 @injectable()
 export class OrderController {
@@ -66,8 +66,7 @@ export class OrderController {
         try {
             if (!req.region || req.region === "all") throw RegionNotResolvedError;
 
-            const branchId = Number(req.query.branchId);
-            if (!branchId) throw BranchIdRequiredError;
+            const branchId = Number(req.params.branchId);
 
             const status = typeof req.query.status === "string" ? (req.query.status as OrderStatus) : undefined;
             const from = typeof req.query.from === "string" ? new Date(req.query.from) : undefined;

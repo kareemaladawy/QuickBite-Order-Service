@@ -139,9 +139,9 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 
 ---
 
-## 6. GET /restaurant/orders
+## 6. GET /restaurant/orders/:branchId
 
-- Filters: `branchId`, `status`, `from`, `to`.
+- `branchId` is a required path param. Filters: `status`, `from`, `to`.
 - Cursor pagination (`createdAt` desc).
 - Authorization: `requireRestaurantMember(restaurantId)` + `requireBranchAccess(branchId)`.
 - Hot endpoint → backed by `idx_orders_branch_status_created_at` + `withCache(10)` for the typical "pending in this branch" page.
@@ -197,7 +197,7 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 | `POST /orders`                              | `customer`                                                         |
 | `GET /orders/{id}`                          | `customer` (own), `restaurant_user` (member of branch), `system_admin` |
 | `GET /customer/orders`                      | `customer`                                                         |
-| `GET /restaurant/orders`                    | `restaurant_user` (`orders:read`), `system_admin`                  |
+| `GET /restaurant/orders/{branchId}`         | `restaurant_user` (`orders:read`), `system_admin`                  |
 | `PATCH /orders/{id}/status` → accept/reject | `restaurant_user` with `orders:accept`                             |
 | `PATCH /orders/{id}/status` → preparing/ready | `restaurant_user` with `orders:update`                           |
 | `PATCH /orders/{id}/status` → cancelled     | `customer` (own, window), `restaurant_user` (`orders:cancel`), `system_admin` |

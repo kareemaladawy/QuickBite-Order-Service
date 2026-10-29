@@ -60,22 +60,23 @@ import type { PaymentService } from "../../payment/service/payment.service";
 // rates are configured.
 const PLATFORM_SERVICE_RATE_BPS = 1000;
 
-// Must match the mount in app.ts (`/api/v1`) + routes.ts (`/restaurant/orders`) — this
-// is what withCache() keys GET /restaurant/orders under (see order.routes.ts).
+// Must match the mount in app.ts (`/api/v1`) + routes.ts (`/restaurant/orders/:branchId`) —
+// this is what withCache() keys GET /restaurant/orders/:branchId under (see order.routes.ts).
 const RESTAURANT_ORDERS_PATH = "/api/v1/restaurant/orders";
 
 // Stamped by sweepStalePendingPaymentOrders — stable, system-facing wording, not
 // something a customer or restaurant action ever produces.
 const STALE_PENDING_PAYMENT_CANCELLATION_REASON = "Payment not completed in time";
 
-// GET /restaurant/orders is cached per exact query string (filters, pagination), so a
-// single `del(key)` can't target every cached variant for a branch — glob-match every
-// key containing this branch's id instead. Called after any write that changes what
-// that list would return for the branch. Awaited by the caller so the list is
-// guaranteed fresh by the time the write's response goes out.
+// GET /restaurant/orders/:branchId is cached per exact query string (filters,
+// pagination) on top of the path-scoped branchId, so a single `del(key)` can't target
+// every cached variant for a branch — glob-match every key under this branch's path
+// segment instead. Called after any write that changes what that list would return for
+// the branch. Awaited by the caller so the list is guaranteed fresh by the time the
+// write's response goes out.
 async function invalidateRestaurantOrdersCache(region: string, branchId: number): Promise<void> {
     try {
-        await cacheProvider.delByPattern(`${region}:GET:${RESTAURANT_ORDERS_PATH}*branchId=${branchId}*`);
+        await cacheProvider.delByPattern(`${region}:GET:${RESTAURANT_ORDERS_PATH}/${branchId}*`);
     } catch (err) {
         logger.warn("restaurant orders cache invalidation failed", { region, branchId, error: (err as Error).message });
     }

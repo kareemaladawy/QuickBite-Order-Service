@@ -13,7 +13,6 @@ export const IdempotencyConflictError = new AppError(
     409,
 );
 export const MissingIdempotencyKeyError = new AppError("Missing Idempotency-Key header", 400);
-export const BranchIdRequiredError = new AppError("branchId is required", 400);
 
 export function invalidStatusTransitionError(from: OrderStatus, to: OrderStatus): AppError {
     return new AppError(`Cannot transition order from "${from}" to "${to}"`, 409);

@@ -40,7 +40,7 @@ orderRouter.get("/customer/orders", authenticate, orderController.listCustomerOr
 // OrderService on placeOrder() and updateStatus() for the affected branch — see
 // invalidateRestaurantOrdersCache() in order.service.ts.
 orderRouter.get(
-    "/restaurant/orders",
+    "/restaurant/orders/:branchId",
     authenticate,
     requireBranchAccess("branchId"),
     withCache(10, false),

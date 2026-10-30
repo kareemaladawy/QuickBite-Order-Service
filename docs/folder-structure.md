@@ -18,7 +18,7 @@ order-service/
 │   ├── business-logic/
 │   │   ├── orders.md
 │   │   ├── payments.md
-│   │   ├── agents.md                 # presence, assignment/offer/accept, delivery status, earnings — no separate deliveries.md
+│   │   ├── agents.md                 # presence, broadcast/accept-reject assignment + sweep worker, delivery status, earnings — no separate deliveries.md
 │   │   ├── restaurant-finance.md
 │   │   └── rbac.md
 │   ├── database-design.md
@@ -27,7 +27,7 @@ order-service/
 │   └── system-design.md
 └── src/
     ├── app.ts                       # express composition (cors, helmet, json, cookie, correlation, routes, errorHandler)
-    ├── server.ts                    # bootstrap: HTTP server + WebSocket attach + archival worker start + graceful shutdown
+    ├── server.ts                    # bootstrap: HTTP server + WebSocket attach + assignment-sweep & archival worker start + graceful shutdown
     ├── routes.ts                    # mounts all module routers under /api
     │
     ├── app/                         # business modules
@@ -72,7 +72,7 @@ order-service/
     │   │   ├── controller/agent.controller.ts          # presence, tasks, earnings
     │   │   ├── controller/delivery.controller.ts       # /orders/:id/delivery/* (assign/reassign/accept/decline/status)
     │   │   ├── service/presence.service.ts             # Redis-only online/offline/ping
-    │   │   ├── service/assignment.service.ts           # auto + manual assignment; Redis geo scan around the branch
+    │   │   ├── service/assignment.service.ts           # broadcast + manual assignment; Redis geo+load scan around the branch, no auto-assignment
     │   │   ├── service/delivery.service.ts              # accept/decline/reassign/status; operates on `orders`, not a delivery entity
     │   │   ├── service/earning.service.ts
     │   │   ├── repository/agent-earning.repo.ts         # the only table this module owns
@@ -139,7 +139,8 @@ order-service/
     │   ├── idempotency/
     │   │   ├── idempotency.ts       # middleware (Redis + DB fallback)
     │   │   └── idempotency-store.ts # the DB-backed durable store
-    │   ├── jobs/                    # NEW: background workers (Phase 5 only)
+    │   ├── jobs/                    # NEW: background workers (Phase 3 + Phase 5)
+    │   │   ├── assignment-sweep.worker.ts  # every 15s: re-broadcasts any `ready` order still missing an agent
     │   │   └── archival.worker.ts   # nightly: moves rows older than current year to archive cluster
     │   ├── knex/
     │   │   ├── knex.ts              # db(region) → Knex (hot); dbArchive(region) (archive cluster)
@@ -223,6 +224,7 @@ Examples in this service:
 
 Examples:
 - `lib/idempotency/idempotency.ts` — middleware that pulls the cache provider from DI.
+- `lib/jobs/assignment-sweep.worker.ts` — ticks every `ASSIGNMENT_SWEEP_CRON_SEC` (default 15s) and re-broadcasts any `ready` order with no live offers, so assignment keeps retrying without relying solely on the in-request hook.
 - `lib/jobs/archival.worker.ts` — nightly job that copies year-old rows to the archive cluster, then deletes from hot.
 - `lib/sharding/region-resolver.ts` — Express middleware mapping requests to a region.
 - `lib/websocket/ws-server.ts` — WS server attached to the HTTP server.

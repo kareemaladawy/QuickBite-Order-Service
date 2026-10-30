@@ -94,7 +94,7 @@ Delivered
 View delivery history
 
 
-View earnings (read-only)
+View earnings (read-only) — an agent earns a flat 80% of the delivery fee on every order they deliver; the platform keeps the remaining 20%
 
 
 
@@ -153,16 +153,25 @@ Financial settlement recorded
 
 4. Delivery Assignment
    Assignment Model
-   Automatic assignment (default)
+   Broadcast accept/reject (no automatic single-agent assignment)
 
 
-Based on proximity
+Ready-for-delivery orders are offered simultaneously to up to 5 candidate agents, ranked by:
 
 
-Agent availability
+Proximity to the restaurant
 
 
-Manual override (Restaurant)
+Agent's current number of active orders (load-balanced; agents may carry more than one order at a time, up to a cap)
+
+
+First agent to accept gets the order; the rest are notified the offer is gone
+
+
+A background job continuously retries assignment for any order still waiting for an agent, so no order is left unassigned purely because the first broadcast didn't land
+
+
+Manual override (Restaurant / Admin)
 
 
 Reassign agent
@@ -176,6 +185,9 @@ Accept
 
 
 Reject (limited retries)
+
+
+All of the above happens in real time over the live connection agents and customers are already on — no polling required.
 
 
 
@@ -228,6 +240,9 @@ Restaurants are paid externally (bank transfer)
 Admin records payout events in the system
 
 
+A payout moves money from the platform to the restaurant, so it's recorded with no source account (the platform isn't a party with its own ledger account) and the restaurant owner as the destination account
+
+
 Balance reduced after payout is recorded
 
 
@@ -277,7 +292,7 @@ Role management (Owner only)
 
 
 Delivery Agent
-Task assignment
+Task assignment (broadcast offer, accept/reject — no automatic assignment)
 
 
 Status updates

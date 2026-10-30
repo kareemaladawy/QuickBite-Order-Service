@@ -159,8 +159,8 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
   - `accepted` → stamp `accepted_at`; WS to customer.
   - `rejected` → stamp `rejected_at`; trigger refund (online, if captured) — no-op for COD, since no money has moved and no transaction row exists yet; WS to customer.
   - `preparing` → stamp; WS.
-  - `ready` → stamp; **enqueue auto-assignment** (delivery service).
-  - `assigned` → only system writes this status (the Agents module's assignment service, on accept). Manual admin override goes through `POST /orders/{orderId}/delivery/assign`, not this endpoint.
+  - `ready` → stamp; **enqueue an assignment broadcast** (delivery service) — no auto-assignment; this fans out `task.offered` to multiple candidate agents and waits for one to accept (see `agents.md` §3). A background sweep worker separately keeps retrying this broadcast for any `ready` order that still needs an agent.
+  - `assigned` → only system writes this status (the Agents module's assignment service, on the winning accept). Manual admin override goes through `POST /orders/{orderId}/delivery/assign`, not this endpoint.
   - `cancelled` → stamp `cancelled_at`, body must include `reason`. If online & captured → trigger refund. If COD → no-op (no transaction row exists before `delivered`, so there's nothing to reverse).
 
 ---

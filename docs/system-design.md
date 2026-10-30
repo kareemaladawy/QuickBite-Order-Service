@@ -126,7 +126,9 @@ For these, we **also** publish via WebSocket on state change so clients don't ac
 
 ### Layer D — Agent presence (Redis-only, no Postgres mirror)
 
-`presence:geo:<region>` (a Redis geo set, `GEOADD`/`GEOSEARCH`) plus `presence:meta:<region>:<agentId>` (last-seen timestamp), both written on `POST /agents/presence/ping` / `/online`. There is no `agent_presence` table — presence is only ever needed for the last ~5 minutes (`PRESENCE_STALE_SEC`), not as a durable record, so Redis is the sole source of truth and keys are left to expire naturally. Auto-assignment `GEOSEARCH`es this set around the **branch's** lat/lng (not the agent's own last pickup) within `ASSIGNMENT_RADIUS_METERS`, filtering out any candidate whose last-seen timestamp is older than the cutoff.
+`presence:geo:<region>` (a Redis geo set, `GEOADD`/`GEOSEARCH`) plus `presence:meta:<region>:<agentId>` (last-seen timestamp) plus `presence:load:<region>` (a sorted set, score = the agent's current in-flight order count), all written on `POST /agents/presence/ping` / `/online` and (for load) on assignment/delivery transitions. There is no `agent_presence` table — presence is only ever needed for the last ~5 minutes (`PRESENCE_STALE_SEC`), not as a durable record, so Redis is the sole source of truth and keys are left to expire naturally.
+
+There is **no auto-assignment**: assignment `GEOSEARCH`es this set around the **branch's** lat/lng (not the agent's own last pickup) within `ASSIGNMENT_RADIUS_METERS`, filters out any candidate whose last-seen timestamp is older than the cutoff or whose `presence:load` is at `AGENT_MAX_CONCURRENT_ORDERS`, ranks survivors by distance + load, and **broadcasts** an offer to the top `ASSIGNMENT_BROADCAST_SIZE` simultaneously — the agent accepts or rejects, first-to-accept wins. A cron-like sweep worker (`lib/jobs/assignment-sweep.worker.ts`, every `ASSIGNMENT_SWEEP_CRON_SEC`) re-runs this for any `ready` order whose broadcast fully emptied out, so assignment keeps retrying independent of the original in-request trigger.
 
 ### Layer E — WebSocket fan-out (socket.io Redis adapter)
 
@@ -310,7 +312,7 @@ client                  order-service                     Kashier
 | `customer:<userId>`       | `order.status_changed`, `delivery.position`        | the customer themselves      |
 | `restaurant:<restId>`     | `order.placed`, `order.cancelled`                  | restaurant owners            |
 | `branch:<branchId>`       | `order.placed`, `order.status_changed`, `delivery.assigned` | branch staff & managers     |
-| `agent:<agentId>`         | `task.assigned`, `task.cancelled`                  | the agent themselves         |
+| `agent:<agentId>`         | `task.offered` (broadcast to several agents at once), `task.offer_lost`, `task.assigned`, `task.cancelled` | the agent themselves         |
 
 ### Fan-out
 
@@ -350,7 +352,8 @@ Money paths are wrapped in `db.transaction()` with `SELECT ... FOR UPDATE` on `r
   - Insert `transactions(type='charge'|'cod_collection', status='succeeded')` if not already.
   - Insert `transactions(type='commission', status='succeeded')` (platform cut).
   - Update `restaurant_balances.balance += subtotal - commission`.
-  - Insert `agent_earnings`.
+  - Insert `agent_earnings` with `amount = floor(order.deliveryFee × AGENT_EARNINGS_SHARE_PCT / 100)` — a flat 80% of the order's delivery fee goes to the agent.
+  - `ZINCRBY presence:load:<region> -1 agentId`.
   - Commit.
 
 - `payout` (admin-recorded):

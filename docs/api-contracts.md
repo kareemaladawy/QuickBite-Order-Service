@@ -388,18 +388,18 @@ class RefundRequestDTO {
 
 There is **no `deliveries` resource/table** — delivery state is a projection of the order itself (`orders.status`, `orders.delivery_agent_id`, `assigned_at`/`picked_at`/`delivered_at`). All delivery endpoints hang off `/api/orders/{orderId}/delivery/...`. The identifier in every path and payload below is the order's `publicId`, never a delivery id.
 
-An auto/manual assignment first creates a Redis-only **offer** (`assignment:offer:<region>:<orderId>` → `{ agentId, expiresAt }`) and pushes `agent:<id>:task.offered`; it is not written to `orders` until the agent accepts (§3.3) or an admin force-assigns (§3.1). This keeps a timed-out or declined offer from ever touching Postgres.
+There is **no auto-assignment**. A broadcast/manual assignment creates one Redis-only **offer per candidate agent** (`assignment:offer:<region>:<orderId>:<agentId>` → TTL'd marker) for up to `ASSIGNMENT_BROADCAST_SIZE` agents at once, and pushes `agent:<id>:task.offered` to all of them simultaneously; nothing is written to `orders` until the first agent accepts (§3.3) or an admin force-assigns (§3.1). A background **sweep worker** (see `agents.md` §3.5) re-broadcasts any `ready` order whose offers have all been declined/expired, on a fixed cadence (`ASSIGNMENT_SWEEP_CRON_SEC`, default 15s) — this, not an in-request retry, is what keeps trying to assign a `ready` order.
 
 ### 3.1 POST /api/orders/{orderId}/delivery/assign
 
-**Auth**: system_admin (or system internal, for the auto-assignment hook off `order.status → 'ready'`).
+**Auth**: system_admin (or system internal, for the broadcast hook off `order.status → 'ready'`, and for the sweep worker's retries).
 
 **Request**
 
 ```ts
 class AssignDeliveryRequestDTO {
   @IsOptional() @IsInt() @Min(1)
-  agentId?: number;  // present → manual, bypasses the offer/accept flow and writes orders directly
+  agentId?: number;  // present → manual, bypasses the broadcast/accept flow and writes orders directly
 }
 ```
 
@@ -412,14 +412,15 @@ class AssignDeliveryRequestDTO {
 | 409    | `{ "error": "OrderNotReady" }`                |
 | 409    | `{ "error": "OrderAlreadyAssigned" }`         |
 | 409    | `{ "error": "NoEligibleAgents" }`             |
+| 409    | `{ "error": "AgentAtCapacity" }`              |
 
 ---
 
 ### 3.2 POST /api/orders/{orderId}/delivery/reassign
 
-**Auth**: system_admin.
+**Auth**: system_admin (or the sweep worker, automatically).
 
-Clears `orders.delivery_agent_id`, increments `orders.reassignment_attempts`, and re-runs assignment (§3.1's algorithm) for a new candidate.
+Increments `orders.reassignment_attempts` and re-runs the broadcast (§3.1's algorithm) for a fresh set of candidates. Does not need to clear `orders.delivery_agent_id` first — under the multi-order model that column is only ever set by a winning accept/manual-assign.
 
 **Response 200**: `DeliveryTaskResponseDTO`.
 
@@ -433,13 +434,13 @@ Clears `orders.delivery_agent_id`, increments `orders.reassignment_attempts`, an
 
 ### 3.3 POST /api/orders/{orderId}/delivery/accept · /decline
 
-**Auth**: delivery_agent (must be the agent currently holding the Redis offer for this order).
+**Auth**: delivery_agent (must be one of the agents currently holding a live Redis offer for this order).
 
-No request body. `accept` commits the offer: in one trx, sets `orders.delivery_agent_id`, `status='assigned'`, `assigned_at`; marks the agent busy in Redis; deletes the offer key; publishes `agent:<id>:task.assigned` and `customer:<id>` / `branch:<id>` `delivery.status_changed`. `decline` (or the offer expiring after `AGENT_ACCEPT_TIMEOUT_SEC`) deletes the offer key and triggers the same reassignment path as §3.2, without incrementing `reassignment_attempts` twice for the same cause.
+No request body. `accept` is first-come-first-served across the broadcast: the service first claims an atomic Redis win-lock (`SET assignment:winner:<region>:<orderId> agentId NX`); if another agent already claimed it, the caller gets 409 `OfferAlreadyTaken`. The winner's accept then, in one trx, sets `orders.delivery_agent_id`, `status='assigned'`, `assigned_at`; `ZINCRBY presence:load:<region> 1 agentId`; deletes every remaining offer key for this order and pushes `agent:<id>:task.offer_lost` to the other candidates; publishes `agent:<id>:task.assigned` and `customer:<id>` / `branch:<id>` `delivery.status_changed`. `decline` just deletes the caller's own offer key — it does **not** trigger an inline reassignment; the sweep worker (§3.5 of `agents.md`) picks the order back up once the whole broadcast has emptied out.
 
 **Response 200**: `DeliveryTaskResponseDTO` (on accept) or `{ "ok": true }` (on decline).
 
-**Errors**: 409 `{ "error": "OfferExpired" }`, 403 if the caller isn't the offer's agent.
+**Errors**: 409 `{ "error": "OfferExpired" }`, 409 `{ "error": "OfferAlreadyTaken" }`, 403 if the caller isn't one of the offer's agents.
 
 ---
 
@@ -513,7 +514,7 @@ class DeliveryTaskResponseDTO {
   total: number;
   currency: string;
   paymentMethod: 'online' | 'cod';
-  earningEstimate?: number;
+  earningEstimate?: number;  // floor(order.deliveryFee × AGENT_EARNINGS_SHARE_PCT / 100) — flat 80% of the order's delivery fee
   assignedAt: string;
 }
 ```
@@ -628,7 +629,7 @@ Server emits with `io.to("<room>").emit("<event.name>", payload)`. Heartbeat is 
 | `customer:<userId>`       | the customer                              | `order.status_changed`, `delivery.position`, `payment.failed`, `payment.captured`                                                                                     |
 | `restaurant:<restId>`     | restaurant owner                          | `order.created`, `order.cancelled`                                                                                                                                    |
 | `branch:<branchId>`       | restaurant manager / staff (member)       | `order.created`, `order.status_changed`, `order.cancelled`, `delivery.status_changed`                                                                                 |
-| `agent:<agentId>`         | the agent                                 | `task.offered`, `task.assigned`, `task.cancelled`                                                                                                                     |
+| `agent:<agentId>`         | the agent                                 | `task.offered` (broadcast, sent to up to `ASSIGNMENT_BROADCAST_SIZE` agents at once), `task.offer_lost` (to candidates who didn't win), `task.assigned`, `task.cancelled` |
 
 Payload shapes for events follow the response DTOs already defined (e.g. `order.status_changed.payload === { orderPublicId, status, updatedAt }`).
 

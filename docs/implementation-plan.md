@@ -63,7 +63,13 @@ Goal: a runnable Express app with the same conventions as `core-service` plus th
    PAYMENT_SESSION_TIMEOUT_MIN=15
    # deliveries/assignment
    ASSIGNMENT_RADIUS_METERS=5000
+   ASSIGNMENT_CANDIDATE_POOL=20
+   ASSIGNMENT_BROADCAST_SIZE=5
+   ASSIGNMENT_SWEEP_CRON_SEC=15
    AGENT_ACCEPT_TIMEOUT_SEC=30
+   AGENT_MAX_CONCURRENT_ORDERS=3
+   LOAD_PENALTY_METERS=1500
+   AGENT_EARNINGS_SHARE_PCT=80
    MAX_REASSIGNMENT_ATTEMPTS=3
    PRESENCE_STALE_SEC=90
    # websocket
@@ -275,9 +281,11 @@ All of the following go under `/api/internal/*` (guarded by the API-key middlewa
 
 ---
 
-## Phase 3 — Agents, delivery status & auto-assignment
+## Phase 3 — Agents, delivery status & assignment (broadcast/accept, no auto-assignment)
 
 Goal: get an order from `ready` to `delivered` using agents only. Per the db design decision, there is **no separate delivery entity** — delivery state lives directly on `orders` (status machine + `delivery_agent_id`, both already in place from Phase 1), and agent presence lives **entirely in Redis**, not Postgres, since it's only ever needed for the last ~5 minutes, not as a durable record. Don't reintroduce either table; the only new table this phase needs is the earnings ledger.
+
+There is **no automatic single-agent assignment**. Every assignment attempt broadcasts a simultaneous offer to up to `ASSIGNMENT_BROADCAST_SIZE` candidate agents (ranked by a distance + current-order-count score — see `agents.md` §3), and agents accept or reject over the existing offer/accept endpoints. Agents may now hold up to `AGENT_MAX_CONCURRENT_ORDERS` in-flight orders at once (tracked by a `presence:load:<region>` Redis sorted set, not a boolean busy flag). A new **cron sweep worker** keeps re-broadcasting `ready` orders that still need an agent — see §4 below — so assignment isn't solely dependent on the in-request hook firing once.
 
 ### Migrations
 
@@ -294,22 +302,29 @@ No `deliveries` table. No `agent_presence` table.
    - `agent-earning.repo.ts` — `insertEarning(conn, ...)`, `findByAgent(agentId, cursor)`.
    - Extend `order.repo.ts` (no new repo file for deliveries): flesh out `setDeliveryAgent`, add `findTasksByAgent(agentId, cursor)` using the existing `idx_orders_delivery_agent_id_status` index.
 5. `presence.service.ts` — **Redis only, no Postgres table**:
-   - `goOnline(agentId, region, lat, lng)` → `GEOADD presence:geo:<region> lng lat agentId` + `SET presence:meta:<region>:<agentId> {lastSeenAt} EX <cutoff>`.
-   - `ping(agentId, lat, lng)` refreshes both keys.
-   - `goOffline(agentId)` → `ZREM` from the geo set + delete the meta key; rejected if the agent is currently `delivery_agent_id` on an order that isn't yet `delivered`.
+   - `goOnline(agentId, region, lat, lng)` → `GEOADD presence:geo:<region> lng lat agentId` + `SET presence:meta:<region>:<agentId> {lastSeenAt} EX <cutoff>` + resync `presence:load:<region>` for this agent from `COUNT(orders WHERE delivery_agent_id=agentId AND status IN ('assigned','picked'))`.
+   - `ping(agentId, lat, lng)` refreshes geo + meta keys (does not touch `presence:load`).
+   - `goOffline(agentId)` → `ZREM` from the geo set + delete the meta key; rejected if the agent currently holds **any** order (`delivery_agent_id`) that isn't yet `delivered` (there may be more than one now).
    - Staleness cutoff is **~5 minutes** — bump `PRESENCE_STALE_SEC` from the Phase 0 default of 90 to 300 to match. An agent not pinged within that window is excluded from assignment even if its Redis key technically hasn't expired yet.
-6. `assignment.service.ts` — implements Agents.md §3's offer/accept algorithm, Redis-only (there is no Postgres fallback to maintain without an `agent_presence` table):
+6. `assignment.service.ts` — implements `agents.md` §3's broadcast/accept algorithm, Redis-only (there is no Postgres fallback to maintain without an `agent_presence` table):
    - Look up the order's branch `lat`/`lng` via the already-cached `GET /api/internal/branches/:id` core-client call from Phase 1.
-   - `GEOSEARCH presence:geo:<region> FROMLONLAT <branchLng> <branchLat> BYRADIUS <ASSIGNMENT_RADIUS_METERS> m ASC` → nearest-first candidates around the **branch's** location.
-   - Drop any candidate whose presence is stale (> cutoff) or who is already busy (active `delivery_agent_id` on another order), then assign the first survivor. No candidates → leave unassigned for manual assignment or the next `tryAssign` retry.
-7. `delivery.service.ts` (operates on `orders` directly, not a `deliveries` table):
-   - `assign(orderId, agentId?)` — manual override, or delegates to `assignment.service.tryAssign`.
+   - `GEOSEARCH presence:geo:<region> FROMLONLAT <branchLng> <branchLat> BYRADIUS <ASSIGNMENT_RADIUS_METERS> m ASC COUNT <ASSIGNMENT_CANDIDATE_POOL>` → nearest-first candidate pool around the **branch's** location.
+   - Drop stale presence and any candidate at `presence:load >= AGENT_MAX_CONCURRENT_ORDERS`; rank survivors by `distanceMeters + loadCount × LOAD_PENALTY_METERS` and take the lowest `ASSIGNMENT_BROADCAST_SIZE`.
+   - Write one `assignment:offer:<region>:<orderId>:<agentId>` key per candidate (TTL `AGENT_ACCEPT_TIMEOUT_SEC`) plus an `assignment:offered:<region>:<orderId>` tracking set, and push `agent:<id>:task.offered` to all of them simultaneously. No candidates → publish `assignment.unassigned_alert` and leave the order `ready`.
+   - `acceptOffer(orderId, agentId)` — atomic win-claim (`SET assignment:winner:... NX`), then commits `delivery_agent_id`/`status='assigned'` in a trx and `ZINCRBY presence:load 1`; tears down the losing offers and pushes `task.offer_lost` to them.
+   - `declineOffer(orderId, agentId)` — just deletes that agent's own offer key; does **not** trigger an inline retry (see worker below).
+7. `assignment-sweep.worker.ts` (new, in `lib/jobs/`) — `setInterval(ASSIGNMENT_SWEEP_CRON_SEC * 1000)` (default 15s), same pattern as the Phase 5 archival worker (no new scheduling library — `setInterval` + a Redis lock is the established convention here), one instance per region process, guarded by a short-TTL Redis lock `assignment:sweep:<region>:lock` to prevent overlapping/duplicate ticks:
+   - Finds `orders WHERE status='ready'` on each region's shard connection (reuses `idx_orders_status_created_at`) with no live `assignment:offered:<region>:<orderId>` set, and re-invokes `assignment.service.tryAssign` for each, incrementing `orders.reassignment_attempts` per broadcast beyond the first (enforcing `MAX_REASSIGNMENT_ATTEMPTS`).
+   - This is **the** "always try to assign ready-for-delivery orders" loop — the in-process hook (step 9) is just the fast path; this worker is the actual retry mechanism, and every broadcast it issues is still delivered to agents over WS in real time.
+8. `delivery.service.ts` (operates on `orders` directly, not a `deliveries` table):
+   - `assign(orderId, agentId?)` — manual override (capacity-checked against `AGENT_MAX_CONCURRENT_ORDERS`), or delegates to `assignment.service.tryAssign`.
    - `updateStatus(orderId, agentId, toStatus)` — reuses the Phase 1 order-status machine; checks the caller is the assigned agent.
-   - `reassign(orderId)` — clears `delivery_agent_id`, increments a `reassignment_attempts` counter column on `orders` (kept deliberately minimal — just a counter, not an audit table), re-invokes `tryAssign`; enforces `MAX_REASSIGNMENT_ATTEMPTS`.
-   - On `delivered`: inserts the `agent_earnings` row, and calls **`finance.service.recordDeliverySettlement(orderId, trx)`** (Phase 4) inside the same trx it owns — Phase 4 is responsible for inserting the (COD-only) `cod_collection` transaction directly as `succeeded` (no pending row exists to flip — placement never wrote one), commission calculation, and the restaurant-balance credit.
-8. Controller + routes: `/agents/presence`, `/agents/tasks`, `/orders/:id/delivery` (assign / reassign / status).
-9. **Cross-module hook** (unchanged from the original plan): `order.service.updateStatus` for target `ready` enqueues `assignment.service.tryAssign(orderId)` in-process after commit.
-10. **WS wiring, done here**: `assignment.service` publishes `agent:<id>:task.assigned` on assignment; `delivery.service.updateStatus` publishes `customer:<id>` / `branch:<id>` `delivery.status_changed` on every transition; `presence.service.ping` publishes `customer:<id>:delivery.position` when the pinging agent has an active delivery. All via the Phase 0 WS publisher — no separate wiring phase follows this one.
+   - `reassign(orderId)` — increments `reassignment_attempts` and re-invokes `assignment.service.tryAssign` (no `delivery_agent_id` to clear — it's only ever set by a *winning* accept/manual-assign); enforces `MAX_REASSIGNMENT_ATTEMPTS`.
+   - On `delivered`: inserts the `agent_earnings` row with `amount = floor(order.deliveryFee × AGENT_EARNINGS_SHARE_PCT / 100)` (flat 80% of the order's delivery fee), `ZINCRBY presence:load -1`, and calls **`finance.service.recordDeliverySettlement(orderId, trx)`** (Phase 4) inside the same trx it owns — Phase 4 is responsible for inserting the (COD-only) `cod_collection` transaction directly as `succeeded` (no pending row exists to flip — placement never wrote one), commission calculation, and the restaurant-balance credit.
+9. Controller + routes: `/agents/presence`, `/agents/tasks`, `/orders/:id/delivery` (assign / accept / decline / reassign / status).
+10. **Cross-module hook** (fast path, unchanged in spirit from the original plan): `order.service.updateStatus` for target `ready` enqueues `assignment.service.tryAssign(orderId)` in-process after commit. The sweep worker (step 7) is the backstop that doesn't depend on this hook having fired.
+11. **WS wiring, done here**: `assignment.service` publishes `agent:<id>:task.offered` (broadcast) and `task.offer_lost`/`task.assigned` on resolution; `delivery.service.updateStatus` publishes `customer:<id>` / `branch:<id>` `delivery.status_changed` on every transition; `presence.service.ping` publishes `customer:<id>:delivery.position` when the pinging agent has an active delivery. All via the Phase 0 WS publisher — no separate wiring phase follows this one.
+12. `server.ts` — starts `assignment-sweep.worker.ts` alongside the HTTP/WS server at boot (same pattern Phase 5 uses for the archival worker).
 
 ### Core-service changes required
 
@@ -317,12 +332,15 @@ No `deliveries` table. No `agent_presence` table.
 
 ### Acceptance
 
-- Order moved to `ready` triggers assignment: nearest agent within `ASSIGNMENT_RADIUS_METERS` of the **branch's** lat/lng, with presence pinged within the last ~5 minutes, gets assigned; manual `agentId` override also works.
-- Agent flow `assigned → picked → delivered` works; only the assigned agent can advance it.
-- Going offline rejects if the agent is the active `delivery_agent_id` on an undelivered order.
-- On `delivered`: `agent_earnings` row exists; `finance.service.recordDeliverySettlement` is invoked and inserts a `succeeded` `cod_collection` row for COD orders (there was never a pending one); the balance/commission effects are verified in Phase 4's acceptance.
-- Reassignment increments `reassignment_attempts`; `MAX_REASSIGNMENT_ATTEMPTS` enforced.
-- A customer subscribed to `customer:<id>` receives `delivery.status_changed` without polling; an agent subscribed to `agent:<id>` receives `task.assigned` on assignment.
+- Order moved to `ready` triggers a **broadcast**: up to `ASSIGNMENT_BROADCAST_SIZE` candidates within `ASSIGNMENT_RADIUS_METERS` of the **branch's** lat/lng, with presence pinged within the last ~5 minutes and under `AGENT_MAX_CONCURRENT_ORDERS`, each receive `task.offered` over WS simultaneously; manual `agentId` override also works (capacity-checked).
+- First agent to call `accept` wins; the rest receive `task.offer_lost`; a losing agent's own `accept` after that returns 409 `OfferAlreadyTaken`.
+- An agent can hold more than one in-flight order at a time, up to `AGENT_MAX_CONCURRENT_ORDERS`; a 4th offer to an at-capacity agent is never sent (verify via `presence:load`).
+- Agent flow `assigned → picked → delivered` works per order; only the assigned agent can advance it.
+- Going offline rejects if the agent holds any undelivered order.
+- Stopping the API process entirely (so the in-process `ready` hook never fires) still results in the order being broadcast within one `ASSIGNMENT_SWEEP_CRON_SEC` tick once the sweep worker runs — confirms the cron worker is a real, independent retry path, not just the hook under another name.
+- On `delivered`: `agent_earnings.amount` equals `floor(order.deliveryFee × 0.8)`; `finance.service.recordDeliverySettlement` is invoked and inserts a `succeeded` `cod_collection` row for COD orders (there was never a pending one); the balance/commission effects are verified in Phase 4's acceptance.
+- Reassignment (via the sweep worker, once a broadcast fully empties out) increments `reassignment_attempts`; `MAX_REASSIGNMENT_ATTEMPTS` enforced.
+- A customer subscribed to `customer:<id>` receives `delivery.status_changed` without polling; an agent subscribed to `agent:<id>` receives `task.offered` on broadcast and `task.assigned` on winning.
 
 ---
 
@@ -355,7 +373,7 @@ No `deliveries` table. No `agent_presence` table.
 
 ---
 
-## Phase 5 — Cold archival worker (the only background worker)
+## Phase 5 — Cold archival worker (the second background worker, after Phase 3's assignment sweep)
 
 ### Goal
 
@@ -401,7 +419,7 @@ Every night, move rows whose `created_at` is in a **prior year** from the hot cl
 Phase 0  Scaffolding (WS base, core-client base, inbound core webhook route)
 Phase 1  Orders                      ───►  COD orders end-to-end
 Phase 2  Payments + Kashier          ───►  online orders end-to-end
-Phase 3  Agents + delivery + assignment ───►  full delivery lifecycle on Redis presence
+Phase 3  Agents + delivery + broadcast assignment ───►  full delivery lifecycle on Redis presence + sweep worker
 Phase 4  Restaurant finance          ───►  commission/balance settlement + owner/admin financial views
 Phase 5  Cold archival worker        ───►  hot DB stays small
 ```

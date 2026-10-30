@@ -68,9 +68,9 @@ If the cache lookup fails AND core-client is down → serve **stale** cache for 
 | `POST /payments/webhook/{provider}`          | none (HMAC)                   |                                        |
 | `GET /restaurants/{restaurantId}/payments/{id}` | `payments:read` or admin   | + `requireRestaurantMember`            |
 | `POST /payments/{id}/refund`                 | system_admin only             |                                        |
-| `POST /orders/{orderId}/delivery/assign`     | `deliveries:assign` or admin  | Manual override; auto path is system-triggered |
-| `POST /orders/{orderId}/delivery/reassign`   | `deliveries:assign` or admin  |                                        |
-| `POST /orders/{orderId}/delivery/accept` · `/decline` | (delivery_agent + offer ownership) | Service checks the Redis offer, not a table row |
+| `POST /orders/{orderId}/delivery/assign`     | `deliveries:assign` or admin  | Manual override; the broadcast path is system/sweep-worker-triggered |
+| `POST /orders/{orderId}/delivery/reassign`   | `deliveries:assign` or admin  | Also triggered automatically by the sweep worker |
+| `POST /orders/{orderId}/delivery/accept` · `/decline` | (delivery_agent + offer ownership) | Service checks the Redis offer, not a table row; `accept` additionally races an atomic Redis win-lock against other broadcast candidates |
 | `PATCH /orders/{orderId}/delivery/status`    | (delivery_agent + ownership)  | Service checks `orders.delivery_agent_id` |
 | `POST /agents/presence/*`                    | (delivery_agent role)         |                                        |
 | `GET /agents/tasks`                          | (delivery_agent role + own)   |                                        |

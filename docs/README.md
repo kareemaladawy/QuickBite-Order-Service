@@ -11,7 +11,7 @@ Read in this order on your first pass.
 | 5 | [`api-contracts.md`](./api-contracts.md)                 | Every endpoint's request/response DTOs, headers, error codes, WS protocol.     |
 | 6 | [`business-logic/orders.md`](./business-logic/orders.md) | Order lifecycle, status machine, cancellation rules.                           |
 | 7 | [`business-logic/payments.md`](./business-logic/payments.md) | Online/COD, Kashier session lifecycle, webhook handling, refunds.          |
-| 8 | [`business-logic/agents.md`](./business-logic/agents.md) | Presence (Redis-only), assignment/offer/accept, delivery status, settlement hook, task list, earnings. No separate Deliveries module — it's all here. |
+| 8 | [`business-logic/agents.md`](./business-logic/agents.md) | Presence (Redis-only), broadcast/accept-reject assignment (no auto-assignment) + a cron sweep worker, delivery status, settlement hook, task list, earnings. No separate Deliveries module — it's all here. |
 | 9 | [`business-logic/restaurant-finance.md`](./business-logic/restaurant-finance.md) | Balance/payout reads, admin payout recording, commission calculation.      |
 |10 | [`business-logic/rbac.md`](./business-logic/rbac.md)     | Permissions seeded in core, per-endpoint mapping, cached resolution.            |
 |11 | [`implementation-plan.md`](./implementation-plan.md)     | Sequenced build order with acceptance gates.                                   |

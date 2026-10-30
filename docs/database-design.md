@@ -468,7 +468,7 @@ core.products      ← order_items.product_id
 | `orders`               | `idx_orders_public_id`                             | `GET /orders/{publicId}`                            |
 | `orders`               | `idx_orders_customer_id_created_at`                | `GET /customer/orders?year=...`                     |
 | `orders`               | `idx_orders_branch_status_created_at`              | `GET /restaurant/orders?branchId&status&from&to`    |
-| `orders`               | `idx_orders_status_created_at` (partial)           | Auto-assignment scan for ready orders               |
+| `orders`               | `idx_orders_status_created_at` (partial)           | Assignment broadcast scan for ready orders + the assignment sweep worker's retry query |
 | `orders`               | `idx_orders_delivery_agent_id_status` (partial)    | `GET /agents/tasks?status=`                         |
 | `order_items`          | `idx_order_items_order_id`                         | Item batch fetch                                    |
 | `payment_sessions`     | `idx_payment_sessions_provider_session_id`         | Webhook lookup                                      |
@@ -482,7 +482,7 @@ core.products      ← order_items.product_id
 
 No speculative indexes. No `CREATE INDEX` lands without a query path comment in the migration.
 
-Auto-assignment's proximity scan (nearest agent to the branch, filtered by last-seen cutoff) is a Redis `GEOSEARCH` on `presence:geo:<region>`, not a Postgres index — there is no `agent_presence` table for a GIST index to live on.
+Assignment's proximity scan (candidate agents around the branch, filtered by last-seen cutoff and ranked by distance + current order count) is a Redis `GEOSEARCH` on `presence:geo:<region>` plus a `presence:load:<region>` sorted-set lookup, not a Postgres index — there is no `agent_presence` table for a GIST index to live on. The assignment sweep worker's own query (`orders WHERE status='ready'`, within the already-region-scoped shard connection) reuses the existing `idx_orders_status_created_at` partial index — no new index needed for it.
 
 ---
 

@@ -81,7 +81,7 @@ src/
     core-client/      # sync HTTP client to core-service — NEW vs core (scaffolded in Phase 0)
     core-events/      # inbound async consumer (RabbitMQ): cache invalidation handlers — NEW vs core
     messaging/        # AMQP connection, channel lifecycle, DI registration — NEW vs core
-    jobs/             # background workers (only the cold archival worker in this milestone)
+    jobs/             # background workers: the assignment sweep worker (Phase 3) and the cold archival worker (Phase 5)
   pkg/                      # reusable, app-agnostic, framework-free
     cache/       # cache.interface.ts, redis.ts
     messaging/   # IMessageBroker interface, amqplib-based RabbitMQ client (no app types)

@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "http";
 import { verifyAccessToken } from "../auth/jwt";
-import { JWTPayload } from "../auth/types";
+import { JWTPayload, SystemRole } from "../auth/types";
 import { WsNoTokenError } from "./errors";
 
 /**
@@ -24,11 +24,11 @@ export function authenticateHandshake(handshake: {
 /** Channels (socket.io rooms) the user is allowed to join. */
 export function permittedChannels(user: JWTPayload): Set<string> {
     const allowed = new Set<string>([`customer:${user.userId}`]);
-    if (user.role === "restaurant_user" && user.restaurantId) {
+    if (user.role === SystemRole.RESTAURANT_USER && user.restaurantId) {
         allowed.add(`restaurant:${user.restaurantId}`);
         for (const b of user.branchIds ?? []) allowed.add(`branch:${b}`);
     }
-    if (user.role === "delivery_agent") {
+    if (user.role === SystemRole.DELIVERY_AGENT) {
         allowed.add(`agent:${user.userId}`);
     }
     return allowed;

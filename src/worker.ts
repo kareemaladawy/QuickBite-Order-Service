@@ -8,6 +8,7 @@ import { TOKENS } from "./lib/di/tokens";
 import { startPendingPaymentSweep } from "./lib/jobs/pending-payment-sweep";
 import { startPaymentReconciler } from "./lib/jobs/payment-reconciler";
 import { startAssignmentSweep } from "./lib/jobs/assignment-sweep.worker";
+import { startArchivalWorker } from "./lib/jobs/archival.worker";
 
 // Never listens — attachWsServer only needs an HttpServer to bind socket.io
 // internals to. Its redis-adapter still fans emits out to every connected
@@ -33,12 +34,14 @@ async function main() {
     const pendingPaymentSweepTimer = startPendingPaymentSweep();
     const paymentReconcilerTimer = startPaymentReconciler();
     const assignmentSweepTimer = startAssignmentSweep();
+    const archivalWorkerTimer = startArchivalWorker();
 
     async function shutdown() {
         logger.info("worker shutdown requested");
         clearInterval(pendingPaymentSweepTimer);
         clearInterval(paymentReconcilerTimer);
         clearInterval(assignmentSweepTimer);
+        clearInterval(archivalWorkerTimer);
         try {
             await io.close();
         } catch { }

@@ -1,14 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import { NotAuthenticated } from "./errors";
-import { RBACOptions } from "./types";
+import { RBACOptions, SystemRole } from "./types";
 import { container } from "../di/container";
 import { TOKENS } from "../di/tokens";
 import { PermissionCacheService } from "./permission-cache.service";
-
-// Role constants kept minimal here; the permission lookup is wired later via a
-// cached projection from core-service (Phase 1+ handler).
-const SYSTEM_ADMIN = "system_admin";
-const RESTAURANT_USER = "restaurant_user";
 
 /**
  * Resolved per-request (not at module load) so this middleware can be constructed by
@@ -20,8 +15,8 @@ export function rbac(_options: RBACOptions) {
         try {
             if (!req.user) throw NotAuthenticated;
             const { allowSystemAdmin = true, resource, action } = _options;
-            if (allowSystemAdmin && req.user.role === SYSTEM_ADMIN) return next();
-            if (req.user.role === RESTAURANT_USER && req.user.restaurantRole) {
+            if (allowSystemAdmin && req.user.role === SystemRole.SYSTEM_ADMIN) return next();
+            if (req.user.role === SystemRole.RESTAURANT_USER && req.user.restaurantRole) {
                 const permissionCache = container.resolve<PermissionCacheService>(TOKENS.PermissionCacheService);
                 const allowed = await permissionCache.hasPermission(
                     req.user.restaurantRole,
@@ -41,7 +36,7 @@ export function requireRestaurantMember(paramName: string = "restaurantId") {
     return (req: Request, res: Response, next: NextFunction) => {
         const restaurantId = Number(req.params[paramName]);
         if (!restaurantId) return res.status(400).json({ error: `missing ${paramName}` });
-        if (req.user?.role === SYSTEM_ADMIN) return next();
+        if (req.user?.role === SystemRole.SYSTEM_ADMIN) return next();
         if (Number(req.user?.restaurantId) !== restaurantId) {
             return res.status(403).json({ error: "Permission denied" });
         }
@@ -51,7 +46,7 @@ export function requireRestaurantMember(paramName: string = "restaurantId") {
 
 export function requireBranchAccess(paramName: string = "branchId") {
     return (req: Request, res: Response, next: NextFunction) => {
-        if (req.user?.role === SYSTEM_ADMIN) return next();
+        if (req.user?.role === SystemRole.SYSTEM_ADMIN) return next();
         if (req.user?.restaurantRole === "owner") return next();
 
         const branchId =

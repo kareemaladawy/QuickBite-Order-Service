@@ -3,10 +3,10 @@ import type { Knex } from "knex";
 import { v4 as uuidv4 } from "uuid";
 import { container } from "../../../lib/di/container";
 import { TOKENS } from "../../../lib/di/tokens";
-import { db } from "../../../lib/knex/knex";
+import { db, dbArchive } from "../../../lib/knex/knex";
 import { logger } from "../../../lib/logger/logger";
 import { cacheProvider } from "../../../lib/cache/init";
-import { JWTPayload } from "../../../lib/auth/types";
+import { JWTPayload, SystemRole } from "../../../lib/auth/types";
 import { bpsOfMinor, multiplyMinor, sumMinor } from "../../../pkg/utils/money";
 import { addMs, toMs } from "../../../pkg/utils/time";
 import { PaginationParams } from "../../../lib/http/pagination/types";
@@ -78,6 +78,12 @@ const RESTAURANT_ORDERS_PATH = "/api/v1/restaurant/orders";
 // Stamped by sweepStalePendingPaymentOrders — stable, system-facing wording, not
 // something a customer or restaurant action ever produces.
 const STALE_PENDING_PAYMENT_CANCELLATION_REASON = "Payment not completed in time";
+
+// docs/implementation-plan.md Phase 5 — only the current year is queryable from the
+// hot cluster; everything older lives in the per-region archive cluster.
+function startOfYearUtc(year: number): Date {
+    return new Date(Date.UTC(year, 0, 1));
+}
 
 // GET /restaurant/orders/:branchId is cached per exact query string (filters,
 // pagination) on top of the path-scoped branchId, so a single `del(key)` can't target
@@ -282,16 +288,24 @@ export class OrderService {
     };
 
     // GET /orders/:orderId — customer (own) + system_admin. No branch/restaurant param
-    // here, so ownership can only be confirmed once the order is loaded.
+    // here, so ownership can only be confirmed once the order is loaded. The archive
+    // cluster is admin-only (docs/implementation-plan.md Phase 5) — a customer never
+    // falls back to it, so a customer's own historical order simply reads as not found
+    // once it's been archived. system_admin gets the hot-first, archive-fallback lookup.
     getOrder = async (publicId: string, region: string, actor: JWTPayload): Promise<GetOrderResult> => {
-        const order = await findOrderByPublicId(publicId, db(region));
+        let conn = db(region);
+        let order = await findOrderByPublicId(publicId, conn);
+        if (!order && actor.role === SystemRole.SYSTEM_ADMIN) {
+            conn = dbArchive(region);
+            order = await findOrderByPublicId(publicId, conn);
+        }
         if (!order) throw OrderNotFoundError;
 
-        if (actor.role !== "system_admin" && !order.isOwnedBy(actor.userId)) {
+        if (actor.role !== SystemRole.SYSTEM_ADMIN && !order.isOwnedBy(actor.userId)) {
             throw ForbiddenOrderAccessError;
         }
 
-        const items = await findItemsByOrderIds([order.id], db(region));
+        const items = await findItemsByOrderIds([order.id], conn);
         return { order, items };
     };
 
@@ -299,39 +313,78 @@ export class OrderService {
     // restaurant_user + system_admin. requireRestaurantMember('restaurantId') and
     // requireBranchAccess('branchId') (routes.ts) already confirmed the caller may act
     // for that restaurant/branch; this is purely a data check — does this order
-    // actually belong to that branch — not an authorization decision.
+    // actually belong to that branch — not an authorization decision. Same hot-first,
+    // archive-fallback lookup as getOrder above.
     getRestaurantOrder = async (
         publicId: string,
         region: string,
         restaurantId: number,
         branchId: number,
     ): Promise<GetOrderResult> => {
-        const order = await findOrderByPublicId(publicId, db(region));
+        let conn = db(region);
+        let order = await findOrderByPublicId(publicId, conn);
+        if (!order) {
+            conn = dbArchive(region);
+            order = await findOrderByPublicId(publicId, conn);
+        }
         if (!order) throw OrderNotFoundError;
 
         if (order.restaurantId !== restaurantId || order.branchId !== branchId) {
             throw OrderNotFoundError;
         }
 
-        const items = await findItemsByOrderIds([order.id], db(region));
+        const items = await findItemsByOrderIds([order.id], conn);
         return { order, items };
     };
 
+    // GET /customer/orders?year=YYYY — the archive cluster is admin/restaurant-only
+    // (docs/implementation-plan.md Phase 5); a customer never reads it, so this always
+    // queries the hot cluster regardless of `year` — a prior-year request simply comes
+    // back empty once those orders have been archived off the hot cluster.
     listCustomerOrders = async (
         customerId: number,
         region: string,
+        year: number,
         pagination: PaginationParams,
     ): Promise<Order[]> => {
-        return findOrdersByCustomer(customerId, pagination, db(region));
+        return findOrdersByCustomer(customerId, { year }, pagination, db(region));
     };
 
+    // GET /restaurant/orders/:branchId?from=&to= — a range entirely in prior years
+    // reads only the archive cluster, a range entirely in the current year reads only
+    // the hot cluster, and a range straddling the boundary (rare) fans out to both and
+    // merges in-memory (docs/implementation-plan.md Phase 5's documented fan-out path).
     listRestaurantOrders = async (
         branchId: number,
         region: string,
         filters: FindOrdersByBranchFilters,
         pagination: PaginationParams,
     ): Promise<Order[]> => {
-        return findOrdersByBranch(branchId, filters, pagination, db(region));
+        const currentYearStart = startOfYearUtc(new Date().getUTCFullYear());
+        const entirelyPastHot = filters.to !== undefined && filters.to < currentYearStart;
+        const entirelyPastArchive = filters.from === undefined || filters.from >= currentYearStart;
+
+        if (entirelyPastHot) {
+            return findOrdersByBranch(branchId, filters, pagination, dbArchive(region));
+        }
+        if (entirelyPastArchive) {
+            return findOrdersByBranch(branchId, filters, pagination, db(region));
+        }
+
+        // Straddles the boundary: query each cluster bounded by the same filters/limit,
+        // merge, re-sort, and hand back at most `limit + 1` rows so the controller's
+        // existing buildPaginationResult (hasMore/nextCursor) keeps working unchanged.
+        const [archiveRows, hotRows] = await Promise.all([
+            findOrdersByBranch(branchId, filters, pagination, dbArchive(region)),
+            findOrdersByBranch(branchId, filters, pagination, db(region)),
+        ]);
+
+        const merged = [...archiveRows, ...hotRows].sort((a, b) => {
+            const diff = a.createdAt.getTime() - b.createdAt.getTime();
+            return pagination.sortOrder === "asc" ? diff : -diff;
+        });
+
+        return merged.slice(0, pagination.limit + 1);
     };
 
     // PATCH /orders/:orderId/status — customer self-cancel + system_admin. There is no
@@ -349,7 +402,7 @@ export class OrderService {
         if (!order) throw OrderNotFoundError;
 
         let actorType: OrderActorType;
-        if (actor.role === "system_admin") {
+        if (actor.role === SystemRole.SYSTEM_ADMIN) {
             actorType = OrderActorType.ADMIN;
         } else if (order.isOwnedBy(actor.userId)) {
             actorType = OrderActorType.CUSTOMER;
@@ -381,7 +434,7 @@ export class OrderService {
             throw OrderNotFoundError;
         }
 
-        const actorType = actor.role === "system_admin" ? OrderActorType.ADMIN : OrderActorType.RESTAURANT;
+        const actorType = actor.role === SystemRole.SYSTEM_ADMIN ? OrderActorType.ADMIN : OrderActorType.RESTAURANT;
 
         return this.applyStatusTransition(order, region, conn, actorType, data);
     };

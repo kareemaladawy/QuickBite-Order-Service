@@ -96,6 +96,12 @@ const baseSchema = z.object({
 
     // docs/business-logic/agents.md §7 — flat share of the order's delivery fee.
     AGENT_EARNINGS_SHARE_PCT: z.string().default("80"),
+
+    // docs/implementation-plan.md Phase 5 — nightly cold-archival worker (moves
+    // prior-year rows from the hot cluster to the per-region archive cluster).
+    ARCHIVAL_BATCH_SIZE: z.string().default("1000"),
+    ARCHIVAL_MAX_RUNTIME_MIN: z.string().default("60"),
+    ARCHIVAL_INTERVAL_SEC: z.string().default("86400"),
 });
 
 const parsed = baseSchema.parse(process.env);
@@ -245,5 +251,11 @@ export const env = {
         maxConcurrentOrders: Number(parsed.AGENT_MAX_CONCURRENT_ORDERS),
         presenceStaleSec: Number(parsed.PRESENCE_STALE_SEC),
         earningsSharePct: Number(parsed.AGENT_EARNINGS_SHARE_PCT),
+    },
+
+    archival: {
+        batchSize: Number(parsed.ARCHIVAL_BATCH_SIZE),
+        maxRuntimeMin: Number(parsed.ARCHIVAL_MAX_RUNTIME_MIN),
+        intervalSec: Number(parsed.ARCHIVAL_INTERVAL_SEC),
     },
 };

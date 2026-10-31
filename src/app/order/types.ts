@@ -79,6 +79,13 @@ export interface FindOrdersByBranchFilters {
     to?: Date;
 }
 
+// GET /customer/orders?year=YYYY (docs/api-contracts.md §1.3) — bounds the query to a
+// single calendar year so the service can decide, from `year` alone, whether to read
+// the hot cluster or the archive cluster (Phase 5).
+export interface FindOrdersByCustomerFilters {
+    year: number;
+}
+
 export interface UpdateOrderStatusInput {
     status: OrderStatus;
     timestampColumn?: string; // whitelisted snake_case column, set by order-status.service.ts

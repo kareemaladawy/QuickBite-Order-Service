@@ -67,8 +67,11 @@ export class OrderController {
 
     listCustomerOrders = async (req: Request, res: Response, next: NextFunction) => {
         try {
+            const parsedYear = Number(req.query.year);
+            const year = Number.isInteger(parsedYear) ? parsedYear : new Date().getUTCFullYear();
+
             const pagination = parsePaginationQuery(req.query as Record<string, unknown>, ["createdAt"]);
-            const orders = await this.orderService.listCustomerOrders(req.user!.userId, req.region!, pagination);
+            const orders = await this.orderService.listCustomerOrders(req.user!.userId, req.region!, year, pagination);
             const { data, meta } = buildPaginationResult(orders, pagination.limit, pagination.sortBy);
 
             sendPaginated(res, data.map(OrderSummaryResponseDTO.from), meta);

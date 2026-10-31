@@ -3,7 +3,13 @@ import { Order } from "../entity/order.entity";
 import { OrderStatus } from "../enums";
 import { applyCursorPagination } from "../../../lib/http/pagination/cursor-pagination";
 import { PaginationParams } from "../../../lib/http/pagination/types";
-import { CreateOrderRow, FindOrdersByBranchFilters, OrderCompositeId, UpdateOrderStatusInput } from "../types";
+import {
+    CreateOrderRow,
+    FindOrdersByBranchFilters,
+    FindOrdersByCustomerFilters,
+    OrderCompositeId,
+    UpdateOrderStatusInput,
+} from "../types";
 
 const ORDER_COLUMNS = [
     "id",
@@ -173,10 +179,17 @@ export async function findOrdersByIds(pairs: OrderCompositeId[], conn: Knex): Pr
 
 export async function findOrdersByCustomer(
     customerId: number,
+    filters: FindOrdersByCustomerFilters,
     pagination: PaginationParams,
     conn: Knex,
 ): Promise<Order[]> {
-    let query = conn("orders").where("customer_id", customerId).select(ORDER_COLUMNS);
+    const yearStart = new Date(Date.UTC(filters.year, 0, 1));
+    const yearEnd = new Date(Date.UTC(filters.year + 1, 0, 1));
+    let query = conn("orders")
+        .where("customer_id", customerId)
+        .where("created_at", ">=", yearStart)
+        .where("created_at", "<", yearEnd)
+        .select(ORDER_COLUMNS);
     query = applyCursorPagination(query, pagination);
     const rows = await query;
     return rows.map(toEntity);

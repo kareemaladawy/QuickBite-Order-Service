@@ -381,7 +381,7 @@ Every night, move rows whose `created_at` is in a **prior year** from the hot cl
 
 ### Migrations
 
-- None in the hot cluster. The archive cluster runs the same migration set as the hot cluster (hot cluster schema == archive cluster schema). Run `npm run migrate:all --cluster=archive` once per region.
+- None in the hot cluster. The archive cluster runs the same migration set as the hot cluster (hot cluster schema == archive cluster schema). Run `npm run migrate:all -- --cluster=archive` once per region.
 
 ### Code
 
@@ -394,8 +394,10 @@ Every night, move rows whose `created_at` is in a **prior year** from the hot cl
    - Respect a max runtime per night (env `ARCHIVAL_MAX_RUNTIME_MIN`, default 60).
    - Emit structured log lines per batch (rows moved, table, region, duration).
 2. **Read-path routing** updates:
-   - `GET /customer/orders?year=YYYY` and `GET /restaurant/orders?from&to`: if the requested range is entirely in prior years → route reads to `dbArchive(region)` instead of `db(region)`. If the range straddles the boundary → split the query in the service, merge results in the DTO layer (rare path; document the fan-out).
-   - `GET /orders/{publicId}`: try hot first; if not found and the request is for an admin or owner, retry on archive. Keep this path off the critical customer-order-tracking flow.
+   - The archive cluster is **admin/restaurant-only** — a customer-authenticated request never reads it, by design (customers only ever see current-year orders).
+   - `GET /restaurant/orders?from&to`: if the requested range is entirely in prior years → route reads to `dbArchive(region)` instead of `db(region)`. If the range straddles the boundary → split the query in the service, merge results in the DTO layer (rare path; document the fan-out).
+   - `GET /customer/orders?year=YYYY`: always reads `db(region)` regardless of `year` — a prior-year request simply comes back empty once those orders are archived off the hot cluster.
+   - `GET /orders/{publicId}`: try hot first; if not found and the caller is `system_admin`, retry on archive. A customer never gets the archive fallback, so a customer's own archived order reads as not found. Keep this path off the critical customer-order-tracking flow.
 3. Archive-cluster knex connections registered in `lib/knex/shards.ts` (slot already reserved since Phase 0).
 
 ### Core-service changes required

@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response, Router } from "express";
 import { authenticate } from "../../lib/auth/guard";
 import { rbac } from "../../lib/auth/rbac";
+import { SystemRole } from "../../lib/auth/types";
 import { idempotency } from "../../lib/idempotency/idempotency";
 import { withCache } from "../../lib/cache/withCache";
 import { container } from "../../lib/di/container";
@@ -18,7 +19,7 @@ const deliveryController = container.resolve<DeliveryController>(TOKENS.Delivery
 // role gate; ownership (which order/offer a given agent may act on) is a service-layer
 // check, same pattern as elsewhere in this service.
 function requireAgentRole(req: Request, res: Response, next: NextFunction) {
-    if (req.user?.role !== "delivery_agent") {
+    if (req.user?.role !== SystemRole.DELIVERY_AGENT) {
         return res.status(403).json({ error: "delivery_agent role required" });
     }
     next();

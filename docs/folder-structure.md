@@ -263,7 +263,7 @@ Same as core-service. Recap:
 | `pkg/` agnostic providers      | yes (`cache`, `email`, `utils`) | yes (`cache`, `messaging`, `payments`, `utils`) |
 | `migrations/`                  | yes                | yes                                            |
 | `dto/` files                   | request only       | **request + response**                         |
-| `db` export                    | singleton          | **`db(region)` function** (+ `dbArchive(region)` in Phase 7) |
+| `db` export                    | singleton          | **`db(region)` function** (+ `dbArchive(region)` in Phase 5) |
 | WebSocket                      | no                 | yes (`lib/websocket/`, scaffold in Phase 0)    |
 | Sharding (per country)         | no                 | yes (`lib/sharding/`)                          |
 | Async to other services        | no                 | **inbound only** via RabbitMQ (`lib/core-events/`); no outbound |

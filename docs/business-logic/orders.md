@@ -135,8 +135,7 @@ The simplest UX is to keep `POST /orders` and `POST /payments/init` as **two sep
 
 - Cursor-paginated.
 - Defaults `year` to the current year if omitted.
-- For current year → query `orders` on customer's home shard via `idx_orders_customer_id_created_at`.
-- For historical years → route to the **archive cluster** (Phase 7) for the same region. Same indexes, same shape.
+- Always queries `orders` on customer's home shard via `idx_orders_customer_id_created_at` — the archive cluster (Phase 5) is admin/restaurant-only, so a customer never reads it. A `year` for a prior, already-archived year simply comes back empty.
 - Cross-country lookup is not optimized for in this milestone (extremely rare).
 
 ---

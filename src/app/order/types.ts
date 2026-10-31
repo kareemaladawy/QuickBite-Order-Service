@@ -60,6 +60,10 @@ export interface CreateOrderRow {
     deliveryLat: number;
     deliveryLng: number;
     deliveryAddressTextSnapshot: string;
+    pickupLat: number;
+    pickupLng: number;
+    pickupAddressTextSnapshot: string;
+    branchNameSnapshot: string;
     status: OrderStatus;
     subtotal: number;
     deliveryFee: number;
@@ -79,6 +83,15 @@ export interface UpdateOrderStatusInput {
     status: OrderStatus;
     timestampColumn?: string; // whitelisted snake_case column, set by order-status.service.ts
     cancellationReason?: string;
+    // Set only on the assigned->picked->delivered agent path, for the 'delivered'
+    // transition — the platform commission computed by the Restaurant Finance module
+    // (finance.service.recordDeliverySettlement), persisted in the same UPDATE as the
+    // status flip rather than a second write.
+    commission?: number;
+}
+
+export interface FindOrdersByAgentFilters {
+    status?: OrderStatus;
 }
 
 export interface CreateOrderItemRow {

@@ -12,6 +12,10 @@ export class Order {
     deliveryLat: number;
     deliveryLng: number;
     deliveryAddressTextSnapshot: string;
+    pickupLat: number;
+    pickupLng: number;
+    pickupAddressTextSnapshot: string;
+    branchNameSnapshot: string;
     status: OrderStatus;
     subtotal: number;
     deliveryFee: number;
@@ -21,6 +25,7 @@ export class Order {
     currency: string;
     paymentMethod: PaymentMethod;
     deliveryAgentId: number | null;
+    reassignmentAttempts: number;
     cancellationReason: string | null;
     createdAt: Date;
     updatedAt: Date;
@@ -45,6 +50,10 @@ export class Order {
         this.deliveryLat = data.deliveryLat!;
         this.deliveryLng = data.deliveryLng!;
         this.deliveryAddressTextSnapshot = data.deliveryAddressTextSnapshot!;
+        this.pickupLat = data.pickupLat!;
+        this.pickupLng = data.pickupLng!;
+        this.pickupAddressTextSnapshot = data.pickupAddressTextSnapshot!;
+        this.branchNameSnapshot = data.branchNameSnapshot!;
         this.status = data.status!;
         this.subtotal = data.subtotal!;
         this.deliveryFee = data.deliveryFee!;
@@ -54,6 +63,7 @@ export class Order {
         this.currency = data.currency!;
         this.paymentMethod = data.paymentMethod!;
         this.deliveryAgentId = data.deliveryAgentId ?? null;
+        this.reassignmentAttempts = data.reassignmentAttempts ?? 0;
         this.cancellationReason = data.cancellationReason ?? null;
         this.createdAt = data.createdAt!;
         this.updatedAt = data.updatedAt!;

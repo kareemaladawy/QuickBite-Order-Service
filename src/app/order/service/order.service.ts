@@ -23,14 +23,21 @@ import {
     findItemsByOrderIds,
 } from "../repository/order-item.repo";
 import {
+    clearDeliveryAgent,
+    countActiveOrdersForAgent,
     createOrder,
+    findActiveOrdersByAgent,
     deleteOrder,
     findOrderById,
     findOrderByPublicId,
+    findOrdersByAgent,
     findOrdersByBranch,
     findOrdersByCustomer,
     findOrdersByIds,
+    findReadyOrders,
     findStalePendingPaymentOrders,
+    incrementReassignmentAttempts,
+    setDeliveryAgent,
     updateOrderStatus,
 } from "../repository/order.repo";
 import { assertTransition, STATUS_TIMESTAMP_COLUMN } from "./order-status.service";
@@ -48,6 +55,7 @@ import {
     orderItemsUnavailableError,
 } from "../errors";
 import {
+    FindOrdersByAgentFilters,
     FindOrdersByBranchFilters,
     GetOrderResult,
     OffendingOrderItem,
@@ -56,6 +64,8 @@ import {
     PlaceOrderResult,
 } from "../types";
 import type { PaymentService } from "../../payment/service/payment.service";
+import type { AssignmentService } from "../../agent/service/assignment.service";
+import type { DeliveryService } from "../../agent/service/delivery.service";
 
 // Flat 10% platform service fee, same across all regions until per-region/per-branch
 // rates are configured.
@@ -176,6 +186,10 @@ export class OrderService {
                     deliveryLat: address.lat,
                     deliveryLng: address.lng,
                     deliveryAddressTextSnapshot: address.addressText,
+                    pickupLat: branch.lat,
+                    pickupLng: branch.lng,
+                    pickupAddressTextSnapshot: branch.addressText,
+                    branchNameSnapshot: branch.name,
                     status,
                     subtotal,
                     deliveryFee,
@@ -406,6 +420,29 @@ export class OrderService {
         this.emitWs(`customer:${order.customerId}`, "order.status_changed", updated);
         this.emitWs(`branch:${order.branchId}`, "order.status_changed", updated);
 
+        // Cross-module hooks (agents.md §9, §8) — fire after the transition is durable
+        // so a hook failure never rolls back (or blocks returning) the status change
+        // itself; each is independently try/caught and logged.
+        if (updated.status === OrderStatus.READY) {
+            try {
+                await this.assignmentService().tryAssign(updated);
+            } catch (err) {
+                logger.error("post-ready assignment broadcast failed — sweep worker will retry", {
+                    orderId: updated.id,
+                    error: (err as Error).message,
+                });
+            }
+        } else if (updated.status === OrderStatus.CANCELLED && order.status === OrderStatus.ASSIGNED) {
+            try {
+                await this.deliveryService().handleCancelledWhileAssigned(updated);
+            } catch (err) {
+                logger.error("delivery cleanup after cancel-while-assigned failed", {
+                    orderId: updated.id,
+                    error: (err as Error).message,
+                });
+            }
+        }
+
         return updated;
     };
 
@@ -532,12 +569,109 @@ export class OrderService {
         return cancelledCount;
     };
 
+    // --- Agents module forwards every orders-table mutation it needs here instead of
+    // reaching into order.repo directly (CLAUDE.md §3). None of these do ownership
+    // checks — callers (delivery.service / assignment.service) already know which
+    // agent/order they're acting on.
+
+    // Commits a winning broadcast-accept or a manual admin assign.
+    assignAgent = async (order: Order, agentId: number, conn: Knex): Promise<Order> => {
+        const updated = await setDeliveryAgent(order.id, order.createdAt, agentId, conn);
+        await invalidateRestaurantOrdersCache(order.region, updated.branchId);
+        return updated;
+    };
+
+    // Cancellation-while-assigned (agents.md §8).
+    clearAgent = async (order: Order, conn: Knex): Promise<Order> => {
+        return clearDeliveryAgent(order.id, order.createdAt, conn);
+    };
+
+    // Every reassignment (admin-triggered or the sweep worker) bumps this counter.
+    bumpReassignmentAttempts = async (order: Order, conn: Knex): Promise<Order> => {
+        return incrementReassignmentAttempts(order.id, order.createdAt, conn);
+    };
+
+    // The assigned->picked->delivered agent path — reuses the same status machine and
+    // actor-matrix as customer/restaurant transitions (order-status.service.ts), just
+    // with OrderActorType.AGENT. `extra.commission` lets the 'delivered' transition
+    // persist the Restaurant Finance module's computed commission in the same UPDATE as
+    // the status flip (see UpdateOrderStatusInput).
+    transitionByAgent = async (
+        order: Order,
+        toStatus: OrderStatus,
+        conn: Knex,
+        extra?: { commission?: number },
+    ): Promise<Order> => {
+        const actorContext: OrderActorContext = {
+            type: OrderActorType.AGENT,
+            orderCreatedAt: order.createdAt,
+            acceptedAt: order.acceptedAt,
+        };
+        assertTransition(order.status, toStatus, actorContext);
+
+        const updated = await updateOrderStatus(
+            order.id,
+            order.createdAt,
+            {
+                status: toStatus,
+                timestampColumn: STATUS_TIMESTAMP_COLUMN[toStatus],
+                commission: extra?.commission,
+            },
+            conn,
+        );
+
+        await invalidateRestaurantOrdersCache(order.region, updated.branchId);
+        return updated;
+    };
+
+    // Backs the assignment-sweep worker's per-region scan.
+    findReadyOrdersForAssignment = async (region: string, limit = 100): Promise<Order[]> => {
+        return findReadyOrders(db(region), limit);
+    };
+
+    // GET /agents/tasks?status=
+    findTasksByAgent = async (
+        agentId: number,
+        region: string,
+        filters: FindOrdersByAgentFilters,
+        pagination: PaginationParams,
+    ): Promise<Order[]> => {
+        return findOrdersByAgent(agentId, filters, pagination, db(region));
+    };
+
+    // PresenceService's online-resync and offline guard (agents.md §1, §2).
+    countActiveDeliveriesForAgent = async (agentId: number, region: string): Promise<number> => {
+        return countActiveOrdersForAgent(agentId, db(region));
+    };
+
+    // PresenceService.ping's position fan-out (agents.md §2).
+    findActiveDeliveriesForAgent = async (agentId: number, region: string): Promise<Order[]> => {
+        return findActiveOrdersByAgent(agentId, db(region));
+    };
+
+    // DeliveryTaskResponseDTO's itemsCount field — the agent module never touches
+    // order_items directly.
+    countItemsForOrder = async (orderId: number, region: string): Promise<number> => {
+        return (await findItemsByOrderIds([orderId], db(region))).length;
+    };
+
     flagPendingOrdersForReview = async (restaurantId: number): Promise<void> => {
         // No column exists yet to flag pending orders for review (that would be a
         // cross-shard scan by restaurant_id, out of scope for Phase 1) — surfaced as a
         // log line for ops to action manually instead.
         logger.warn("restaurant suspended — review its pending orders manually", { restaurantId });
     };
+
+    // Resolved lazily for the same reason PaymentService is (see its own comment) —
+    // avoids a load-order dependency between the order and agent modules' container
+    // registrations.
+    private assignmentService(): AssignmentService {
+        return container.resolve<AssignmentService>(TOKENS.AssignmentService);
+    }
+
+    private deliveryService(): DeliveryService {
+        return container.resolve<DeliveryService>(TOKENS.DeliveryService);
+    }
 
     // Resolved lazily (not constructor-injected) because the socket.io server is
     // registered on TOKENS.WsServer in server.ts *after* the DI container has already

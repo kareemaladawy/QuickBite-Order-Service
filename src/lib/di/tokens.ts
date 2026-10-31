@@ -19,4 +19,15 @@ export const TOKENS = {
     PaymentController: Symbol.for("PaymentController"),
     PaymentWebhookService: Symbol.for("PaymentWebhookService"),
     WebhookController: Symbol.for("WebhookController"),
+
+    // agent module (presence, assignment, delivery lifecycle, earnings)
+    PresenceService: Symbol.for("PresenceService"),
+    AssignmentService: Symbol.for("AssignmentService"),
+    DeliveryService: Symbol.for("DeliveryService"),
+    PresenceController: Symbol.for("PresenceController"),
+    DeliveryController: Symbol.for("DeliveryController"),
+
+    // restaurant-finance module
+    FinanceService: Symbol.for("FinanceService"),
+    FinanceController: Symbol.for("FinanceController"),
 };

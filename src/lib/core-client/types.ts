@@ -45,6 +45,12 @@ export interface InternalRolePermissionsDTO {
     permissions: string[]; // e.g. "orders:read", namespaced per §8 of CLAUDE.md
 }
 
+export interface InternalAgentDTO {
+    id: number;
+    name: string;
+    phone: string;
+}
+
 export interface InternalCustomerAddressDTO {
     id: number;
     userId: number;

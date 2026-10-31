@@ -17,6 +17,10 @@ const ORDER_COLUMNS = [
     "delivery_lat",
     "delivery_lng",
     "delivery_address_text_snapshot",
+    "pickup_lat",
+    "pickup_lng",
+    "pickup_address_text_snapshot",
+    "branch_name_snapshot",
     "status",
     "subtotal",
     "delivery_fee",
@@ -26,6 +30,7 @@ const ORDER_COLUMNS = [
     "currency",
     "payment_method",
     "delivery_agent_id",
+    "reassignment_attempts",
     "cancellation_reason",
     "created_at",
     "updated_at",
@@ -54,6 +59,10 @@ function toEntity(row: any): Order {
         deliveryLat: Number(row.delivery_lat),
         deliveryLng: Number(row.delivery_lng),
         deliveryAddressTextSnapshot: row.delivery_address_text_snapshot,
+        pickupLat: Number(row.pickup_lat),
+        pickupLng: Number(row.pickup_lng),
+        pickupAddressTextSnapshot: row.pickup_address_text_snapshot,
+        branchNameSnapshot: row.branch_name_snapshot,
         status: row.status,
         subtotal: row.subtotal,
         deliveryFee: row.delivery_fee,
@@ -63,6 +72,7 @@ function toEntity(row: any): Order {
         currency: row.currency,
         paymentMethod: row.payment_method,
         deliveryAgentId: row.delivery_agent_id === null ? null : Number(row.delivery_agent_id),
+        reassignmentAttempts: row.reassignment_attempts,
         cancellationReason: row.cancellation_reason,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -91,6 +101,10 @@ export async function createOrder(data: CreateOrderRow, conn: Knex): Promise<Ord
             delivery_lat: data.deliveryLat,
             delivery_lng: data.deliveryLng,
             delivery_address_text_snapshot: data.deliveryAddressTextSnapshot,
+            pickup_lat: data.pickupLat,
+            pickup_lng: data.pickupLng,
+            pickup_address_text_snapshot: data.pickupAddressTextSnapshot,
+            branch_name_snapshot: data.branchNameSnapshot,
             status: data.status,
             subtotal: data.subtotal,
             delivery_fee: data.deliveryFee,
@@ -196,6 +210,7 @@ export async function updateOrderStatus(
 
     if (data.timestampColumn) patch[data.timestampColumn] = new Date();
     if (data.cancellationReason !== undefined) patch.cancellation_reason = data.cancellationReason;
+    if (data.commission !== undefined) patch.commission = data.commission;
 
     // created_at is part of the PK (partitioned table) — included so the planner can
     // prune to a single partition instead of scanning every one.
@@ -216,14 +231,16 @@ export async function deleteOrder(orderId: number, orderCreatedAt: Date, conn: K
     await conn("orders").where("id", orderId).where("created_at", orderCreatedAt).del();
 }
 
-// Forward scaffolding for the Phase 3 assignment service — not wired to any route yet.
+// Called only via OrderService.assignAgent (CLAUDE.md §3 — the Agents module never
+// reaches into this repo directly) — commits a winning broadcast-accept or a manual
+// admin assign. `orders.delivery_agent_id` is set here and nowhere else in this file.
 export async function setDeliveryAgent(
     orderId: number,
     orderCreatedAt: Date,
     agentId: number,
     conn: Knex,
-): Promise<void> {
-    await conn("orders")
+): Promise<Order> {
+    const [row] = await conn("orders")
         .where("id", orderId)
         .where("created_at", orderCreatedAt)
         .update({
@@ -231,5 +248,70 @@ export async function setDeliveryAgent(
             status: OrderStatus.ASSIGNED,
             assigned_at: new Date(),
             updated_at: new Date(),
-        });
+        })
+        .returning(ORDER_COLUMNS);
+    return toEntity(row);
+}
+
+// Cancellation-while-assigned (agents.md §8) clears the committed agent so the order no
+// longer counts against anyone's presence:load.
+export async function clearDeliveryAgent(orderId: number, orderCreatedAt: Date, conn: Knex): Promise<Order> {
+    const [row] = await conn("orders")
+        .where("id", orderId)
+        .where("created_at", orderCreatedAt)
+        .update({ delivery_agent_id: null, updated_at: new Date() })
+        .returning(ORDER_COLUMNS);
+    return toEntity(row);
+}
+
+// Only ever incremented by a reassignment (admin-triggered or the sweep worker) —
+// accept/decline/expiry never touch this counter (agents.md §4, §9).
+export async function incrementReassignmentAttempts(orderId: number, orderCreatedAt: Date, conn: Knex): Promise<Order> {
+    const [row] = await conn("orders")
+        .where("id", orderId)
+        .where("created_at", orderCreatedAt)
+        .update({ reassignment_attempts: conn.raw("reassignment_attempts + 1"), updated_at: new Date() })
+        .returning(ORDER_COLUMNS);
+    return toEntity(row);
+}
+
+// Backs the assignment-sweep worker's per-region scan (idx_orders_status_created_at) —
+// a small, transient slice of the hot table (agents.md §14).
+export async function findReadyOrders(conn: Knex, limit = 100): Promise<Order[]> {
+    const rows = await conn("orders").where("status", OrderStatus.READY).limit(limit).select(ORDER_COLUMNS);
+    return rows.map(toEntity);
+}
+
+// Backs GET /agents/tasks?status= (idx_orders_delivery_agent_id_status).
+export async function findOrdersByAgent(
+    agentId: number,
+    filters: { status?: OrderStatus },
+    pagination: PaginationParams,
+    conn: Knex,
+): Promise<Order[]> {
+    let query = conn("orders").where("delivery_agent_id", agentId).select(ORDER_COLUMNS);
+    if (filters.status) query = query.where("status", filters.status);
+    query = applyCursorPagination(query, pagination);
+    return (await query).map(toEntity);
+}
+
+// Any order currently committed to this agent that isn't yet delivered — used by
+// PresenceService.goOffline's 409 AgentInActiveDelivery check (agents.md §1).
+export async function countActiveOrdersForAgent(agentId: number, conn: Knex): Promise<number> {
+    const row = await conn("orders")
+        .where("delivery_agent_id", agentId)
+        .whereIn("status", [OrderStatus.ASSIGNED, OrderStatus.PICKED])
+        .count<{ count: string }[]>({ count: "*" })
+        .first();
+    return Number(row?.count ?? 0);
+}
+
+// Bounded by AGENT_MAX_CONCURRENT_ORDERS — used to fan out a ping's lat/lng to every
+// order this agent is currently handling (PresenceService.ping, agents.md §2).
+export async function findActiveOrdersByAgent(agentId: number, conn: Knex): Promise<Order[]> {
+    const rows = await conn("orders")
+        .where("delivery_agent_id", agentId)
+        .whereIn("status", [OrderStatus.ASSIGNED, OrderStatus.PICKED])
+        .select(ORDER_COLUMNS);
+    return rows.map(toEntity);
 }

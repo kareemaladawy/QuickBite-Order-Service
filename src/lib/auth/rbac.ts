@@ -21,10 +21,10 @@ export function rbac(_options: RBACOptions) {
             if (!req.user) throw NotAuthenticated;
             const { allowSystemAdmin = true, resource, action } = _options;
             if (allowSystemAdmin && req.user.role === SYSTEM_ADMIN) return next();
-            if (req.user.role === RESTAURANT_USER) {
+            if (req.user.role === RESTAURANT_USER && req.user.restaurantRole) {
                 const permissionCache = container.resolve<PermissionCacheService>(TOKENS.PermissionCacheService);
                 const allowed = await permissionCache.hasPermission(
-                    req.user.role,
+                    req.user.restaurantRole,
                     `${resource}:${action}`,
                     req.correlationId,
                 );

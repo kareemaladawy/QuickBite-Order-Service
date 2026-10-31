@@ -17,6 +17,13 @@ import {PaymentService} from "../../app/payment/service/payment.service";
 import {PaymentWebhookService} from "../../app/payment/service/payment-webhook.service";
 import {PaymentController} from "../../app/payment/controller/payment.controller";
 import {WebhookController} from "../../app/payment/controller/webhook.controller";
+import {PresenceService} from "../../app/agent/service/presence.service";
+import {AssignmentService} from "../../app/agent/service/assignment.service";
+import {DeliveryService} from "../../app/agent/service/delivery.service";
+import {PresenceController} from "../../app/agent/controller/presence.controller";
+import {DeliveryController} from "../../app/agent/controller/delivery.controller";
+import {FinanceService} from "../../app/restaurant-finance/service/finance.service";
+import {FinanceController} from "../../app/restaurant-finance/controller/finance.controller";
 
 // Infrastructure
 container.registerSingleton<Logger>(TOKENS.Logger, Logger);
@@ -39,5 +46,16 @@ container.registerSingleton(TOKENS.PaymentService, PaymentService);
 container.registerSingleton(TOKENS.PaymentWebhookService, PaymentWebhookService);
 container.registerSingleton(TOKENS.PaymentController, PaymentController);
 container.registerSingleton(TOKENS.WebhookController, WebhookController);
+
+// Agent module (presence, assignment, delivery lifecycle, earnings)
+container.registerSingleton(TOKENS.PresenceService, PresenceService);
+container.registerSingleton(TOKENS.AssignmentService, AssignmentService);
+container.registerSingleton(TOKENS.DeliveryService, DeliveryService);
+container.registerSingleton(TOKENS.PresenceController, PresenceController);
+container.registerSingleton(TOKENS.DeliveryController, DeliveryController);
+
+// Restaurant-finance module
+container.registerSingleton(TOKENS.FinanceService, FinanceService);
+container.registerSingleton(TOKENS.FinanceController, FinanceController);
 
 export {container};

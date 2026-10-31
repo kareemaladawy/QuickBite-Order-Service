@@ -80,6 +80,22 @@ const baseSchema = z.object({
     // same transition for a charge that only just succeeded.
     PAYMENT_RECONCILER_GRACE_SEC: z.string().default("120"),
     PAYMENT_RECONCILER_INTERVAL_SEC: z.string().default("60"),
+
+    // docs/business-logic/agents.md §3 — broadcast/accept delivery assignment.
+    ASSIGNMENT_RADIUS_METERS: z.string().default("5000"),
+    ASSIGNMENT_CANDIDATE_POOL: z.string().default("20"),
+    ASSIGNMENT_BROADCAST_SIZE: z.string().default("5"),
+    ASSIGNMENT_SWEEP_CRON_SEC: z.string().default("15"),
+    AGENT_ACCEPT_TIMEOUT_SEC: z.string().default("30"),
+    LOAD_PENALTY_METERS: z.string().default("1500"),
+    MAX_REASSIGNMENT_ATTEMPTS: z.string().default("5"),
+
+    // docs/business-logic/agents.md §1 — agent presence & capacity.
+    AGENT_MAX_CONCURRENT_ORDERS: z.string().default("3"),
+    PRESENCE_STALE_SEC: z.string().default("300"),
+
+    // docs/business-logic/agents.md §7 — flat share of the order's delivery fee.
+    AGENT_EARNINGS_SHARE_PCT: z.string().default("80"),
 });
 
 const parsed = baseSchema.parse(process.env);
@@ -213,5 +229,21 @@ export const env = {
     paymentReconciler: {
         graceSec: Number(parsed.PAYMENT_RECONCILER_GRACE_SEC),
         intervalSec: Number(parsed.PAYMENT_RECONCILER_INTERVAL_SEC),
+    },
+
+    assignment: {
+        radiusMeters: Number(parsed.ASSIGNMENT_RADIUS_METERS),
+        candidatePool: Number(parsed.ASSIGNMENT_CANDIDATE_POOL),
+        broadcastSize: Number(parsed.ASSIGNMENT_BROADCAST_SIZE),
+        sweepCronSec: Number(parsed.ASSIGNMENT_SWEEP_CRON_SEC),
+        acceptTimeoutSec: Number(parsed.AGENT_ACCEPT_TIMEOUT_SEC),
+        loadPenaltyMeters: Number(parsed.LOAD_PENALTY_METERS),
+        maxReassignmentAttempts: Number(parsed.MAX_REASSIGNMENT_ATTEMPTS),
+    },
+
+    agents: {
+        maxConcurrentOrders: Number(parsed.AGENT_MAX_CONCURRENT_ORDERS),
+        presenceStaleSec: Number(parsed.PRESENCE_STALE_SEC),
+        earningsSharePct: Number(parsed.AGENT_EARNINGS_SHARE_PCT),
     },
 };

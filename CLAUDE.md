@@ -49,7 +49,8 @@ It does **not** own: users, restaurants, branches, products, RBAC permission cat
 ```
 src/
   app.ts                    # express app composition
-  server.ts                 # bootstrap + graceful shutdown
+  server.ts                 # HTTP/WS bootstrap + graceful shutdown — no background workers here
+  worker.ts                 # background-worker bootstrap + graceful shutdown — all lib/jobs/* timers start here, not server.ts
   routes.ts                 # mounts all module routers under /api
   app/                      # business modules (one folder per bounded context)
     <module>/
@@ -81,7 +82,7 @@ src/
     core-client/      # sync HTTP client to core-service — NEW vs core (scaffolded in Phase 0)
     core-events/      # inbound async consumer (RabbitMQ): cache invalidation handlers — NEW vs core
     messaging/        # AMQP connection, channel lifecycle, DI registration — NEW vs core
-    jobs/             # background workers: the assignment sweep worker (Phase 3) and the cold archival worker (Phase 5)
+    jobs/             # background workers: the assignment sweep worker (Phase 3) and the cold archival worker (Phase 5) — started from worker.ts only, never server.ts
   pkg/                      # reusable, app-agnostic, framework-free
     cache/       # cache.interface.ts, redis.ts
     messaging/   # IMessageBroker interface, amqplib-based RabbitMQ client (no app types)
@@ -331,6 +332,7 @@ Core must use a **transactional outbox** on its side: domain mutation and an out
 ### WebSocket
 
 - One `ws` server per region-pinned process, mounted on the same HTTP server (`server.ts`). The server **scaffold** (server, hub, auth, publisher) lands in **Phase 0** so any module added later can publish without re-wiring infrastructure. Wiring of actual events into services happens in **Phase 6**.
+- `worker.ts` also registers `TOKENS.WsServer` so services can publish from a sweep tick — it attaches `attachWsServer` to a plain `http.createServer()` that never calls `.listen()`. No port is bound and no sockets connect locally; `io.to(room).emit(...)` still fans out to real connections on `server.ts` processes via the Redis adapter.
 - Channel naming: `customer:<userId>`, `restaurant:<restaurantId>`, `branch:<branchId>`, `agent:<agentId>`.
 - Auth on connect: client passes the same access token (cookie or `?token=` query). The server verifies, then subscribes the socket to channels it is authorized for.
 - Broadcasts are produced by services after a status transition commits, published via Redis Pub/Sub so all WS workers in the region receive it.
@@ -345,7 +347,7 @@ This service is the **hot path**. The following are non-negotiable:
 2. **Every query must be backed by an index.** Run `EXPLAIN` mentally before merging.
 3. **No SELECT \***. Always list columns via `<MODULE>_COLUMNS` (matches core).
 4. **No app-side joins** of data that lives in the same DB. Use SQL joins.
-5. **Long-running work** (PDF generation, bulk emails, archival) goes to a background worker, not a request handler.
+5. **Long-running work** (PDF generation, bulk emails, archival) goes to a background worker, not a request handler. All worker jobs (`lib/jobs/*`) are started from `worker.ts`, run as their own process — never add a `start*`/`setInterval` call for a job to `server.ts`.
 6. **Cache** read-heavy endpoints (restaurant order list filtered to `pending`, agent task list, branch presence). TTL chosen per use case, documented in the route file.
 7. **Idempotency** on every write endpoint that costs money or creates orders.
 8. **Connection pool**: `DB_POOL_MAX` is per-shard. Default 10. Tune from benchmarks.

@@ -9,8 +9,6 @@ import { startCoreEventsConsumer } from "./lib/core-events/consumer";
 import { attachWsServer } from "./lib/websocket/ws-server";
 import { container } from "./lib/di/container";
 import { TOKENS } from "./lib/di/tokens";
-import { startPendingPaymentSweep } from "./lib/jobs/pending-payment-sweep";
-import { startPaymentReconciler } from "./lib/jobs/payment-reconciler";
 
 const app = createApp();
 const server = http.createServer(app);
@@ -40,13 +38,8 @@ server.listen(env.port, async () => {
         });
 });
 
-const pendingPaymentSweepTimer = startPendingPaymentSweep();
-const paymentReconcilerTimer = startPaymentReconciler();
-
 async function shutdown() {
     logger.info("shutdown requested");
-    clearInterval(pendingPaymentSweepTimer);
-    clearInterval(paymentReconcilerTimer);
     server.close(async () => {
         try {
             await io.close();

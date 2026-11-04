@@ -133,3 +133,62 @@ export interface BranchChangedPayload {
 export interface RestaurantSuspendedPayload {
     restaurantId: number;
 }
+
+// Rich outbox payload for analytics-service (see outbox-events.ts) — a flattened
+// snapshot of the order at the moment of the event, not a public response DTO.
+export interface OrderOutboxItemPayload {
+    productId: number;
+    nameSnapshot: string;
+    quantity: number;
+    unitPriceSnapshot: number;
+    lineTotal: number;
+}
+
+export interface OrderOutboxPayload {
+    id: number;
+    publicId: string;
+    region: string;
+    countryCode: string;
+    restaurantId: number;
+    branchId: number;
+    customerId: number;
+    deliveryAgentId: number | null;
+    status: OrderStatus;
+    subtotal: number;
+    deliveryFee: number;
+    serviceFee: number;
+    total: number;
+    commission: number;
+    currency: string;
+    paymentMethod: string;
+    cancellationReason: string | null;
+    createdAt: string;
+    updatedAt: string;
+    acceptedAt: string | null;
+    rejectedAt: string | null;
+    readyAt: string | null;
+    assignedAt: string | null;
+    pickedAt: string | null;
+    deliveredAt: string | null;
+    cancelledAt: string | null;
+}
+
+// Leaner, dedicated payload for order.placed — fired once, at submission, before the
+// order has any of the fields above (accepted/rejected/delivered/etc.).
+export interface OrderPlacedOutboxPayload {
+    orderId: number;
+    region: string;
+    countryCode: string;
+    restaurantId: number;
+    branchId: number;
+    customerId: number;
+    status: OrderStatus;
+    paymentMethod: string;
+    subtotal: number;
+    deliveryFee: number;
+    serviceFee: number;
+    total: number;
+    currency: string;
+    items: OrderOutboxItemPayload[];
+    placedAt: string;
+}

@@ -66,6 +66,18 @@ export class RabbitMQClient implements IMessageBroker {
         await ch.close();
     }
 
+    // Make sure a publish-only exchange exists (no queue/bindings — those belong to
+    // whoever consumes it). Same throwaway-channel strategy as declareTopology.
+    async declareExchange(exchange: string): Promise<void> {
+        await this.connect();
+        const ch = this.connection!.createChannel({
+            json: false,
+            setup: (c: ConfirmChannel) => c.assertExchange(exchange, "topic", { durable: true }),
+        });
+        await ch.waitForConnect();
+        await ch.close();
+    }
+
     // Open a long-lived consumer channel.
     // Everything inside `setup` re-runs on every reconnect, so topology and
     // the consumer registration are restored automatically after broker restarts.

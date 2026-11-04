@@ -9,6 +9,8 @@ import { startPendingPaymentSweep } from "./lib/jobs/pending-payment-sweep";
 import { startPaymentReconciler } from "./lib/jobs/payment-reconciler";
 import { startAssignmentSweep } from "./lib/jobs/assignment-sweep.worker";
 import { startArchivalWorker } from "./lib/jobs/archival.worker";
+import { registerOutboxDrainJobs } from "./lib/events/jobs";
+import { messageBroker } from "./lib/messaging/init";
 
 // Never listens — attachWsServer only needs an HttpServer to bind socket.io
 // internals to. Its redis-adapter still fans emits out to every connected
@@ -31,10 +33,20 @@ async function main() {
         logger.error("shard ping failed", { error: (err as Error).message });
     }
 
+    // The outbox drain is the only job here that publishes to RabbitMQ — connect
+    // before starting its timer. Non-fatal at boot (same as server.ts): the drain
+    // just logs and retries on the next tick if the broker isn't reachable yet.
+    try {
+        await messageBroker.connect();
+    } catch (err) {
+        logger.warn("rabbitmq not reachable at worker boot — will retry", { error: (err as Error).message });
+    }
+
     const pendingPaymentSweepTimer = startPendingPaymentSweep();
     const paymentReconcilerTimer = startPaymentReconciler();
     const assignmentSweepTimer = startAssignmentSweep();
     const archivalWorkerTimer = startArchivalWorker();
+    const outboxDrainTimer = registerOutboxDrainJobs();
 
     async function shutdown() {
         logger.info("worker shutdown requested");
@@ -42,9 +54,15 @@ async function main() {
         clearInterval(paymentReconcilerTimer);
         clearInterval(assignmentSweepTimer);
         clearInterval(archivalWorkerTimer);
+        clearInterval(outboxDrainTimer);
         try {
             await io.close();
         } catch { }
+        try {
+            await messageBroker.close();
+        } catch (err) {
+            logger.warn("broker close error", { error: (err as Error).message });
+        }
         try {
             await destroyAll();
         } catch (err) {

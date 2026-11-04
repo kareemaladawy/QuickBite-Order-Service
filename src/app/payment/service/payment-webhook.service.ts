@@ -19,6 +19,8 @@ import {
     updateTransaction,
 } from "../repository/transaction.repo";
 import { insertWebhookEventIfNew, markWebhookEventError, markWebhookEventProcessed } from "../repository/payment-webhook-event.repo";
+import { insertPaymentOutboxEvent } from "../outbox-events";
+import { OrderEventType } from "../../../lib/events/event-types";
 import { PaymentSessionStatus, TransactionMethod, TransactionStatus, TransactionType } from "../enums";
 import {
     InvalidWebhookSignatureError,
@@ -126,7 +128,7 @@ export class PaymentWebhookService {
     private async handleCapture(event: WebhookEvent, region: string, providerId: number, trx: Knex.Transaction): Promise<void> {
         const order = await this.orderService().getOrderForSystem(event.orderReference, region);
 
-        await createTransaction(
+        const transaction = await createTransaction(
             {
                 region,
                 orderId: order.id,
@@ -141,6 +143,12 @@ export class PaymentWebhookService {
                 srcAccId: order.customerId,
                 idempotencyKey: `${event.transactionId}:${event.status}`,
             },
+            trx,
+        );
+
+        await insertPaymentOutboxEvent(
+            transaction,
+            event.status === "SUCCESS" ? OrderEventType.PAYMENT_COMPLETED : OrderEventType.PAYMENT_FAILED,
             trx,
         );
 

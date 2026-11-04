@@ -163,11 +163,11 @@ Hard service boundary. Two databases. Two deploy lifecycles. Sharing code beyond
 
 ## 5. Asynchronous communication
 
-This service does **not** emit outbound async events to anyone in this milestone:
-- No analytics service exists yet — its async integration is out of scope.
-- Nothing else needs at-least-once delivery from us today (everything client-facing is delivered via WebSocket; webhooks from Kashier come **into** us).
+This service has two async paths:
+- **Inbound from `core-service`** — cache invalidation and authorization invalidation (§5.1 below).
+- **Outbound to `analytics-service`** — order lifecycle and payment outcome events, via our own transactional outbox (§5.2 below). We don't own or build the analytics consumer itself; we only emit to it.
 
-The only async path is **inbound from `core-service`** for cache invalidation and authorization invalidation.
+### 5.1 Inbound: core-service → order-service
 
 ### Transport: RabbitMQ
 
@@ -229,13 +229,41 @@ Publishing directly in the request path without an outbox loses events on crash 
 
 - **Decouples core's request lifecycle from our availability.** If this service is down, events queue up; core's write path isn't blocked.
 - **Back-pressure for free.** Bursts buffer in the broker.
-- **Future consumers without coupling.** When an analytics service ships, it binds its own queue to `core.events` with its own routing patterns — no change to the producer.
+- **Future consumers without coupling.** `analytics-service` (or anyone else) binds its own queue to `order.events` with its own routing patterns — no change to the producer.
 - **Standard retry/DLQ model.** We don't have to build retry semantics ourselves.
 
 ### What we do NOT do
 
-- We do **not** emit anything outbound from this service. No `events_outbox` here.
 - We do **not** fan out WebSocket events via RabbitMQ — that's Redis pub/sub (Layer E of §3), different trade-offs (low latency, ephemeral, same-region).
+
+### 5.2 Outbound: order-service → analytics-service
+
+We **use our own transactional outbox**, same pattern as core's (above) and mirroring core's `lib/events/` naming conventions, adapted to this service's region sharding: the service layer inserts a row into the region shard's `events_outbox` table in the **same DB trx** as the domain write (`lib/events/outbox.repo.ts`'s `insertOutboxEvent`; repos never publish or insert outbox rows themselves). The table has **no `region` column** — it's per-shard, so the shard itself is the region; a row never needs to say which one it's in. Event types are the `OrderEventType` enum in `lib/events/event-types.ts` (mirrors core's `CoreEventType`). A background job (`lib/events/jobs.ts`'s `registerOutboxDrainJobs()`, called from `worker.ts` next to the other job registrations, plain `setInterval` — this service has no `croner`) drains every region each tick: `SELECT ... FOR UPDATE SKIP LOCKED`, publish to RabbitMQ with **publisher confirms** (`lib/events/outbox-drain.ts`'s `drainOutboxForRegion`), stamp `dispatched_at` only after the broker acks. `SKIP LOCKED` makes N drain processes safe to run in parallel. A per-region Redis lock (same shape as the other `lib/jobs/*` workers) keeps ticks from overlapping; it's a courtesy, not the correctness mechanism — `SKIP LOCKED` is. A publish failure means the broker is sick, not that one event is bad — that row is marked failed and the rest of the batch is left untouched for the next tick, rather than retried row-by-row against a down broker.
+
+Publishing directly in the request path without an outbox would lose events on crash between DB commit and broker publish — not acceptable, same reasoning as core's requirement on itself.
+
+A new exchange — **not** `core.events`. This service is the producer here, the opposite role it has on the core-events side.
+
+| Component       | Name                     | Owner         |
+| ---------------- | ------------------------ | ------------- |
+| Topic exchange    | `order.events` (durable) | this service  |
+| Table (per shard) | `events_outbox`          | this service  |
+
+### Events emitted (routing key = `eventType`)
+
+| Event              | Trigger                                                         |
+| ------------------ | ---------------------------------------------------------------- |
+| `order.placed`      | COD: order submitted (`placeOrder`), fired immediately. Online: the capture webhook confirms payment (`markPlacedBySystem`'s `pending_payment → placed` transition), not at submission |
+| `order.accepted`    | Restaurant/admin accepts the order                               |
+| `order.rejected`    | Restaurant/admin rejects the order                                |
+| `order.cancelled`   | Customer/admin cancels, or the stale-pending-payment sweep auto-cancels |
+| `order.delivered`   | Delivery agent marks the order delivered                         |
+| `payment.completed` | Kashier capture webhook reports `SUCCESS`                        |
+| `payment.failed`    | Kashier capture webhook reports failure                          |
+
+Either way, `order.placed` fires exactly once per order — `placeOrder` only emits it for COD; for online orders it waits for `markPlacedBySystem`, since an order that never completes payment never becomes meaningfully "placed".
+
+Payloads are rich (a flattened snapshot of the order/transaction), not thin references — `analytics-service` is a trusted internal consumer, same trust boundary as the inbound side (no HMAC on the wire). `order.placed`'s payload is its own leaner shape (the order has no accepted/rejected/delivered/etc. fields yet at submission time); other order events use the fuller snapshot. Delivery semantics are at-least-once; a consumer must dedupe on the envelope's `eventId`.
 
 ---
 

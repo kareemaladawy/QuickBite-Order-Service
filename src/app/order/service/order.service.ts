@@ -41,6 +41,8 @@ import {
     updateOrderStatus,
 } from "../repository/order.repo";
 import { assertTransition, STATUS_TIMESTAMP_COLUMN } from "./order-status.service";
+import { insertOrderOutboxEvent, insertOrderPlacedOutboxEvent, ORDER_STATUS_OUTBOX_EVENT_TYPE } from "../outbox-events";
+import { OrderEventType } from "../../../lib/events/event-types";
 import { Order } from "../entity/order.entity";
 import { OrderItem } from "../entity/order-item.entity";
 import { CreateOrderRequestDTO, UpdateOrderStatusRequestDTO } from "../dto/order.request.dto";
@@ -224,6 +226,13 @@ export class OrderService {
                 }),
                 trx,
             );
+
+            // COD is placed immediately, so fire order.placed here. Online orders are
+            // still `pending_payment` at this point — their order.placed fires later,
+            // from markPlacedBySystem, once the capture webhook confirms payment.
+            if (data.paymentMethod === PaymentMethod.COD) {
+                await insertOrderPlacedOutboxEvent(order, items, trx);
+            }
 
             await trx.commit();
         } catch (err) {
@@ -457,16 +466,32 @@ export class OrderService {
         };
         assertTransition(order.status, data.status, actorContext);
 
-        const updated = await updateOrderStatus(
-            order.id,
-            order.createdAt,
-            {
-                status: data.status,
-                timestampColumn: STATUS_TIMESTAMP_COLUMN[data.status],
-                cancellationReason: data.status === OrderStatus.CANCELLED ? data.reason : undefined,
-            },
-            conn,
-        );
+        // Explicit trx (a savepoint if `conn` is already one) so the status flip and
+        // its outbox event (if this transition has one) commit atomically.
+        const trx = await conn.transaction();
+        let updated: Order;
+        try {
+            updated = await updateOrderStatus(
+                order.id,
+                order.createdAt,
+                {
+                    status: data.status,
+                    timestampColumn: STATUS_TIMESTAMP_COLUMN[data.status],
+                    cancellationReason: data.status === OrderStatus.CANCELLED ? data.reason : undefined,
+                },
+                trx,
+            );
+
+            const eventType = ORDER_STATUS_OUTBOX_EVENT_TYPE[data.status];
+            if (eventType) {
+                await insertOrderOutboxEvent(updated, eventType, trx);
+            }
+
+            await trx.commit();
+        } catch (err) {
+            await trx.rollback();
+            throw err;
+        }
 
         await invalidateRestaurantOrdersCache(region, updated.branchId);
 
@@ -534,12 +559,25 @@ export class OrderService {
         };
         assertTransition(order.status, OrderStatus.PLACED, actorContext);
 
-        const updated = await updateOrderStatus(
-            order.id,
-            order.createdAt,
-            { status: OrderStatus.PLACED },
-            db(region)
-        );
+        // Online orders only fire order.placed here, once the capture webhook confirms
+        // payment — unlike COD (fired at submission in placeOrder), an online order
+        // isn't "placed" in any sense analytics cares about until payment clears.
+        const trx = await db(region).transaction();
+        let updated: Order;
+        try {
+            updated = await updateOrderStatus(
+                order.id,
+                order.createdAt,
+                { status: OrderStatus.PLACED },
+                trx,
+            );
+            const items = await findItemsByOrderIds([order.id], trx);
+            await insertOrderPlacedOutboxEvent(updated, items, trx);
+            await trx.commit();
+        } catch (err) {
+            await trx.rollback();
+            throw err;
+        }
 
         await invalidateRestaurantOrdersCache(region, updated.branchId);
 
@@ -578,16 +616,25 @@ export class OrderService {
                 };
                 assertTransition(order.status, OrderStatus.CANCELLED, actorContext);
 
-                const updated = await updateOrderStatus(
-                    order.id,
-                    order.createdAt,
-                    {
-                        status: OrderStatus.CANCELLED,
-                        timestampColumn: STATUS_TIMESTAMP_COLUMN[OrderStatus.CANCELLED],
-                        cancellationReason: STALE_PENDING_PAYMENT_CANCELLATION_REASON,
-                    },
-                    conn,
-                );
+                const sweepTrx = await conn.transaction();
+                let updated: Order;
+                try {
+                    updated = await updateOrderStatus(
+                        order.id,
+                        order.createdAt,
+                        {
+                            status: OrderStatus.CANCELLED,
+                            timestampColumn: STATUS_TIMESTAMP_COLUMN[OrderStatus.CANCELLED],
+                            cancellationReason: STALE_PENDING_PAYMENT_CANCELLATION_REASON,
+                        },
+                        sweepTrx,
+                    );
+                    await insertOrderOutboxEvent(updated, OrderEventType.ORDER_CANCELLED, sweepTrx);
+                    await sweepTrx.commit();
+                } catch (err) {
+                    await sweepTrx.rollback();
+                    throw err;
+                }
 
                 // Best-effort: the order is already cancelled regardless of whether
                 // this succeeds — a release failure here means stock stays reserved,
@@ -662,16 +709,41 @@ export class OrderService {
         };
         assertTransition(order.status, toStatus, actorContext);
 
-        const updated = await updateOrderStatus(
-            order.id,
-            order.createdAt,
-            {
-                status: toStatus,
-                timestampColumn: STATUS_TIMESTAMP_COLUMN[toStatus],
-                commission: extra?.commission,
-            },
-            conn,
-        );
+        let updated: Order;
+        if (toStatus === OrderStatus.DELIVERED) {
+            // Only 'delivered' emits an outbox event on this path — wrap it in its own
+            // trx (a savepoint if `conn` is already one) so the status flip and the
+            // event commit atomically.
+            const trx = await conn.transaction();
+            try {
+                updated = await updateOrderStatus(
+                    order.id,
+                    order.createdAt,
+                    {
+                        status: toStatus,
+                        timestampColumn: STATUS_TIMESTAMP_COLUMN[toStatus],
+                        commission: extra?.commission,
+                    },
+                    trx,
+                );
+                await insertOrderOutboxEvent(updated, OrderEventType.ORDER_DELIVERED, trx);
+                await trx.commit();
+            } catch (err) {
+                await trx.rollback();
+                throw err;
+            }
+        } else {
+            updated = await updateOrderStatus(
+                order.id,
+                order.createdAt,
+                {
+                    status: toStatus,
+                    timestampColumn: STATUS_TIMESTAMP_COLUMN[toStatus],
+                    commission: extra?.commission,
+                },
+                conn,
+            );
+        }
 
         await invalidateRestaurantOrdersCache(order.region, updated.branchId);
         return updated;

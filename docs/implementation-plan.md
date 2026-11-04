@@ -415,6 +415,39 @@ Every night, move rows whose `created_at` is in a **prior year** from the hot cl
 
 ---
 
+## Phase 6 — Outbound event outbox (for `analytics-service`)
+
+### Goal
+
+Emit order lifecycle (`placed`, `accepted`, `rejected`, `delivered`, `cancelled`) and payment outcome (`completed`, `failed`) events to a new `order.events` topic exchange, reliably, via a transactional outbox — same pattern `core-service` uses on its own domain mutations (see §5 Reliability requirement on `core-service` in `docs/system-design.md`), adapted to this service's per-region sharding and plain `setInterval` jobs (no `croner` here).
+
+### Migrations
+
+- `events_outbox` table, per shard (`aggregate_type, aggregate_id, event_type, event_id, payload JSONB, created_at, dispatched_at, attempts, last_error` — no `region` column; the shard itself is the region), run via the existing `migrate:all` path.
+
+### Code
+
+1. `pkg/messaging/message-broker.interface.ts` / `rabbitmq.client.ts` — `declareExchange(exchange)`, a publish-only exchange declare (existing `declareTopology` is consumer-shaped).
+2. `lib/events/event-types.ts` — `OrderEventType` enum (mirrors core-service's `lib/events/event-types.ts`'s `CoreEventType`).
+3. `lib/events/types.ts` — `OutboxEventInput`/`OutboxEventRow`/`OutboxEventEnvelope`/`OutboxFailure`.
+4. `lib/events/outbox.repo.ts` — `insertOutboxEvent`, `claimUndispatchedEvents` (`FOR UPDATE SKIP LOCKED`), `markEventsDispatched`, `markEventsFailed` (bulk) — same function names/shape as core-service's `lib/events/outbox.repo.ts`.
+5. `lib/events/outbox-drain.ts` — `drainOutboxForRegion(region)`: one trx per batch, publish with confirms, stamp `dispatched_at` (the per-region equivalent of core's `worker.ts`-embedded `drainOutbox`); a publish failure marks that row failed and stops the batch early rather than hammering a down broker row-by-row.
+6. `lib/events/jobs.ts` — `registerOutboxDrainJobs()`: `setInterval` + per-region Redis lock, same shape as `lib/jobs/pending-payment-sweep.ts`; the drain iterates every region each tick. Called from `worker.ts` next to the other job registrations (which now also connects `messageBroker` at boot, since only `server.ts` did before).
+7. Insertion call sites, each in the same trx as the domain mutation: `OrderService.placeOrder` (COD only, right after `bulkInsertItems` → `order.placed`, a leaner dedicated payload — see `app/order/outbox-events.ts`'s `insertOrderPlacedOutboxEvent`), `OrderService.markPlacedBySystem` (online only, the `pending_payment → placed` transition on a captured payment → `order.placed`, same leaner payload, items re-fetched via `findItemsByOrderIds` since this path doesn't already hold them in memory), `OrderService.applyStatusTransition` (`order.accepted`/`order.rejected`/`order.cancelled`), `OrderService.sweepStalePendingPaymentOrders` (system cancel → `order.cancelled`), `OrderService.transitionByAgent` (delivered → `order.delivered`), `PaymentWebhookService.handleCapture` (`payment.completed`/`payment.failed`). `order.placed` fires exactly once per order either way — `placeOrder` only fires it for COD; an online order isn't meaningfully "placed" until payment clears, so it waits for `markPlacedBySystem`.
+
+### Core-service changes required
+
+- None.
+
+### Acceptance
+
+- Bind a throwaway test queue to `order.events` with key `#`; placing a COD order produces one `order.placed` message; the matching `events_outbox` row's `dispatched_at` gets set within one drain tick.
+- Full order lifecycle (placed → accepted → ready → assigned → picked → delivered) and a cancellation each produce exactly one matching event.
+- Placing an online order produces no `order.placed` yet (still `pending_payment`); its capture webhook produces `payment.completed`, then `order.placed` (from `markPlacedBySystem`) — in that order, not the other way round.
+- Killing `worker.ts` mid-batch and restarting it re-sends only the rows whose `dispatched_at` never committed (no gaps, at-least-once duplicates acceptable).
+
+---
+
 ## Build cadence summary
 
 ```
@@ -424,6 +457,7 @@ Phase 2  Payments + Kashier          ───►  online orders end-to-end
 Phase 3  Agents + delivery + broadcast assignment ───►  full delivery lifecycle on Redis presence + sweep worker
 Phase 4  Restaurant finance          ───►  commission/balance settlement + owner/admin financial views
 Phase 5  Cold archival worker        ───►  hot DB stays small
+Phase 6  Outbound event outbox       ───►  order/payment events reach analytics-service
 ```
 
 Each phase is shippable. No phase mixes modules. No phase is started until the previous phase's acceptance is checked AND the matching **"Core-service changes required"** for that phase (listed inline above) are in place. WebSocket events are wired inline as each phase lands (see each phase's own "WS wiring" step) — there is no dedicated WS phase.

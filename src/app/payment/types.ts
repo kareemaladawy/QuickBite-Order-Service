@@ -66,3 +66,19 @@ export interface UpdateTransactionInput {
     isRefunded?: boolean;
     refundedPaymentId?: number;
 }
+
+// Rich outbox payload for analytics-service (see outbox-events.ts) — a flattened
+// snapshot of the charge transaction, not a public response DTO.
+export interface PaymentOutboxPayload {
+    transactionId: number;
+    region: string;
+    orderId: number | null;
+    orderCreatedAt: string | null;
+    transactionType: TransactionType;
+    method: TransactionMethod;
+    providerId: number | null;
+    status: TransactionStatus;
+    amount: number;
+    currency: string;
+    createdAt: string;
+}

@@ -44,6 +44,14 @@ const baseSchema = z.object({
     RABBITMQ_CORE_EVENTS_DLQ: z.string().default("order-service.core-events.dlq"),
     RABBITMQ_PREFETCH: z.string().default("32"),
 
+    // Outbound topic exchange this service publishes order/payment events to (consumed
+    // by analytics-service) — see lib/events/ and the events_outbox table per shard.
+    // A new exchange, deliberately not `core.events` — this service is a producer
+    // here, not the consumer it is on the core-events side.
+    RABBITMQ_ORDER_EVENTS_EXCHANGE: z.string().default("order.events"),
+    OUTBOUND_EVENTS_BATCH_SIZE: z.string().default("100"),
+    OUTBOUND_EVENTS_DRAIN_TICK_SEC: z.string().default("2"),
+
     CORE_SERVICE_BASE_URL: z.string(),
     CORE_INTERNAL_API_KEY: z.string(),
 
@@ -257,5 +265,11 @@ export const env = {
         batchSize: Number(parsed.ARCHIVAL_BATCH_SIZE),
         maxRuntimeMin: Number(parsed.ARCHIVAL_MAX_RUNTIME_MIN),
         intervalSec: Number(parsed.ARCHIVAL_INTERVAL_SEC),
+    },
+
+    outbox: {
+        exchange: parsed.RABBITMQ_ORDER_EVENTS_EXCHANGE,
+        batchSize: Number(parsed.OUTBOUND_EVENTS_BATCH_SIZE),
+        intervalSec: Number(parsed.OUTBOUND_EVENTS_DRAIN_TICK_SEC),
     },
 };

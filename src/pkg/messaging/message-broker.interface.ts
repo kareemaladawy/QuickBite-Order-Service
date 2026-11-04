@@ -18,6 +18,7 @@ export interface IMessageBroker {
     connect(): Promise<void>;
     close(): Promise<void>;
     declareTopology(opts: ConsumerOptions): Promise<void>;
+    declareExchange(exchange: string): Promise<void>;
     consume(opts: ConsumerOptions, handler: (msg: ConsumeMessage) => Promise<void>): Promise<void>;
     publish(exchange: string, routingKey: string, body: Buffer): Promise<void>;
 }

@@ -305,9 +305,9 @@ The default export `defaultDb` exists only for migrations and shared (non-sharde
 
 - All request bodies pass through `validateBody(RequestDTO, req.body)`. Path/query params are validated inline in the controller (`Number(req.params.id)`, `parsePaginationQuery`, `parseFilters`).
 
-### Async with `core-service` (RabbitMQ)
+### Async with `core-service` (RabbitMQ) — inbound
 
-This service does **not** emit outbound async events to anyone in this milestone. The only async path is **inbound from `core-service` over RabbitMQ** for cache invalidation and authorization invalidation.
+The only async path from `core-service` is **inbound**, over RabbitMQ, for cache invalidation and authorization invalidation.
 
 - Topology:
   - Topic exchange: `core.events` (durable, declared by core).
@@ -323,7 +323,17 @@ This service does **not** emit outbound async events to anyone in this milestone
 - Delivery semantics: **at-least-once**. Manual ack after the handler commits. Duplicates are expected.
 - Dedupe via Redis SETNX on `core-events:dedupe:<eventId>` (24h TTL): set-if-absent before dispatching the handler; if not fresh, ack and skip. Safe to expire because every handler is an idempotent cache invalidation.
 - Authentication: AMQP credentials (per-service vhost user/pass from env). No HMAC on the wire — the broker is trusted.
-- There is **no** outbound `events_outbox` in this service. If a future consumer requires it, add both the table and a dispatcher then.
+
+### Async to `analytics-service` (RabbitMQ) — outbound
+
+This service **does** emit outbound events, via our own transactional outbox — `analytics-service` is the consumer (see §12 implementation plan Phase 6; not built by us). Mirrors the reliability requirement we place on `core-service` below, applied to ourselves, and mirrors core's own `lib/events/` naming conventions:
+
+- **Topology**: a **new** topic exchange, `order.events` (durable) — deliberately not `core.events`; this service is the producer here. Declared by this service (`lib/events/` via `IMessageBroker.declareExchange`). No queue/bindings here — those belong to whoever consumes it.
+- **Table**: `events_outbox`, one per shard (`aggregate_type, aggregate_id, event_type, event_id, payload JSONB, created_at, dispatched_at, attempts, last_error`) — **no `region` column**; the table is per-shard, so the shard itself is the region. The service layer inserts a row in the **same DB trx** as the domain write (`lib/events/outbox.repo.ts`'s `insertOutboxEvent`); repos never insert outbox rows themselves. Event types are the `OrderEventType` enum in `lib/events/event-types.ts` — mirrors core-service's `lib/events/event-types.ts`'s `CoreEventType` naming.
+- **Drain**: `lib/events/outbox-drain.ts`'s `drainOutboxForRegion(region)`, called every tick for every region by `lib/events/jobs.ts`'s `registerOutboxDrainJobs()` (a plain `setInterval` job — this service has no `croner`), called from `worker.ts` next to the other job registrations. Each tick: `SELECT ... FOR UPDATE SKIP LOCKED`, publish with publisher confirms, stamp `dispatched_at` only after the broker acks. `SKIP LOCKED` makes N drain processes per region safe in parallel; a per-region Redis lock on top just avoids redundant ticks. A publish error marks that row failed and **bails out of the rest of the batch** — the broker is sick, not that one row, so don't hold the batch's row locks hammering it one row at a time.
+- **Events emitted** (routing key = `event_type`): `order.placed`, `order.accepted`, `order.rejected`, `order.delivered`, `order.cancelled`, `payment.completed`, `payment.failed` — all using the leaner `order.placed`-specific payload shape only for `order.placed` itself (the order has no accepted/rejected/delivered/etc. fields yet at that point); the rest use the fuller snapshot. `order.placed` fires exactly once per order, but from different call sites depending on payment method: COD fires it at submission, in `placeOrder`'s own trx (a COD order is placed immediately). Online fires it later, from `markPlacedBySystem`, once the capture webhook confirms payment (`payment.completed`) — an online order isn't meaningfully "placed" before that, so `placeOrder` does **not** emit it for online orders.
+- **Payloads are rich** (a flattened snapshot of the order/transaction, not a thin reference) — `analytics-service` is a trusted internal consumer, same trust boundary as the inbound side.
+- **Delivery semantics**: at-least-once, same as inbound. No dedupe table on our side (we're the producer) — the consumer dedupes on the envelope's `eventId`.
 
 ### Reliability requirement on `core-service`
 
@@ -388,7 +398,7 @@ Follow this exact order — never skip ahead:
 9. Mount in `src/routes.ts`.
 10. Smoke test the endpoint manually before moving on.
 
-Implement one module end-to-end before starting the next. Order: **orders → payments → agents (delivery lifecycle, assignment & presence, merged — no separate deliveries module) → restaurant-finance → archival worker**. WebSocket events are wired inline as each module lands, not in a separate phase. See `docs/implementation-plan.md`.
+Implement one module end-to-end before starting the next. Order: **orders → payments → agents (delivery lifecycle, assignment & presence, merged — no separate deliveries module) → restaurant-finance → archival worker → outbound event outbox**. WebSocket events are wired inline as each module lands, not in a separate phase. See `docs/implementation-plan.md`.
 
 ---
 
@@ -405,8 +415,7 @@ Implement one module end-to-end before starting the next. Order: **orders → pa
 
 ## 13. Out of scope (do not build)
 
-- Analytics service / analytics DB and any async event emission to it (separate service, future).
-- Outbound async events from this service to **any** consumer in this milestone — async with core-service is **inbound only** (cache invalidation).
+- The `analytics-service` itself and its DB — we emit events for it (§8 "Async to `analytics-service`"), we don't build or own it.
 - DevOps / deploy infra, observability stack, benchmark/perf testing — separate effort, future.
 - Read replicas — single primary per region for now; revisit when traffic justifies it.
 - Recommendations, loyalty, AI delivery optimization, reviews (PRD §13).

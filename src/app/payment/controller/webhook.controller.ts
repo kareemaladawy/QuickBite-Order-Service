@@ -5,7 +5,7 @@ import { PaymentWebhookService } from "../service/payment-webhook.service";
 
 @injectable()
 export class WebhookController {
-    constructor(@inject(TOKENS.PaymentWebhookService) private readonly paymentWebhookService: PaymentWebhookService) {}
+    constructor(@inject(TOKENS.PaymentWebhookService) private readonly paymentWebhookService: PaymentWebhookService) { }
 
     handle = async (req: Request, res: Response, next: NextFunction) => {
         try {
@@ -15,7 +15,7 @@ export class WebhookController {
                 req.headers as Record<string, string | string[] | undefined>,
             );
 
-            res.status(200).json({ success: true, duplicate: result.duplicate });
+            res.status(200).json({ duplicate: result.duplicate });
         } catch (error) {
             next(error);
         }

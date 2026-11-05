@@ -363,7 +363,7 @@ export class OrderService {
     // reads only the archive cluster, a range entirely in the current year reads only
     // the hot cluster, and a range straddling the boundary (rare) fans out to both and
     // merges in-memory (docs/implementation-plan.md Phase 5's documented fan-out path).
-    listRestaurantOrders = async (
+    listBranchOrders = async (
         branchId: number,
         region: string,
         filters: FindOrdersByBranchFilters,

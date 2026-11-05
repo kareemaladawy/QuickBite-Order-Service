@@ -80,7 +80,7 @@ export class OrderController {
         }
     };
 
-    listRestaurantOrders = async (req: Request, res: Response, next: NextFunction) => {
+    listBranchOrders = async (req: Request, res: Response, next: NextFunction) => {
         try {
             const branchId = Number(req.params.branchId);
 
@@ -89,7 +89,7 @@ export class OrderController {
             const to = typeof req.query.to === "string" ? new Date(req.query.to) : undefined;
 
             const pagination = parsePaginationQuery(req.query as Record<string, unknown>, ["createdAt"]);
-            const orders = await this.orderService.listRestaurantOrders(
+            const orders = await this.orderService.listBranchOrders(
                 branchId,
                 req.region!,
                 { status, from, to },

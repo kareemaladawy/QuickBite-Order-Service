@@ -81,10 +81,11 @@ orderRouter.get(
 // OrderService on placeOrder() and updateStatus() for the affected branch — see
 // invalidateRestaurantOrdersCache() in order.service.ts.
 orderRouter.get(
-    "/restaurant/orders/:branchId",
+    "/restaurants/:restaurantId/branches/:branchId/orders",
     authenticate,
     requireConcreteRegion,
+    requireRestaurantMember("restaurantId"),
     requireBranchAccess("branchId"),
     withCache(10, false),
-    orderController.listRestaurantOrders,
+    orderController.listBranchOrders,
 );

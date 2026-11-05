@@ -207,7 +207,7 @@ These belong on `core-service` and must land before this service's Phase 0 is co
 7. `order.service.ts` —
    - `placeOrder(...)` per Orders.md §2 (validate via core-client cached → compute money → trx → after-commit reserveStock).
    - `getOrder(...)`: by publicId; ownership check; loads items batch + payment summary (joins).
-   - `listCustomerOrders(...)`, `listRestaurantOrders(...)` with cursor pagination.
+   - `listCustomerOrders(...)`, `listBranchOrders(...)` with cursor pagination.
    - `updateStatus(...)`: validates transition, stamps timestamp, publishes WS immediately via the Phase 0 publisher (`customer:<id>` / `branch:<id>` `order.status_changed`) — there is no separate WS-wiring phase; every phase wires its own events as it lands.
 8. `order.controller.ts` — wire `validateBody`, `sendSuccess`/`sendPaginated`, response DTOs.
 9. `routes.ts` — `authenticate`, `idempotency({strict:true})` on `POST /orders`, `withCache(10)` on `GET /restaurant/orders` per branch+status.

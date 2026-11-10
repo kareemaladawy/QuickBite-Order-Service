@@ -6,7 +6,7 @@ import { idempotency } from "../../lib/idempotency/idempotency";
 import { withCache } from "../../lib/cache/withCache";
 import { container } from "../../lib/di/container";
 import { TOKENS } from "../../lib/di/tokens";
-import { requireConcreteRegion } from "../../lib/sharding/region-resolver";
+import { requireRegion } from "../../lib/sharding/region-resolver";
 import { PresenceController } from "./controller/presence.controller";
 import { DeliveryController } from "./controller/delivery.controller";
 
@@ -28,7 +28,7 @@ function requireAgentRole(req: Request, res: Response, next: NextFunction) {
 agentRouter.post(
     "/agents/presence/online",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     presenceController.online,
 );
@@ -36,7 +36,7 @@ agentRouter.post(
 agentRouter.post(
     "/agents/presence/offline",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     presenceController.offline,
 );
@@ -44,7 +44,7 @@ agentRouter.post(
 agentRouter.post(
     "/agents/presence/ping",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     presenceController.ping,
 );
@@ -52,7 +52,7 @@ agentRouter.post(
 agentRouter.get(
     "/agents/tasks",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     withCache(5, true),
     deliveryController.listTasks,
@@ -61,7 +61,7 @@ agentRouter.get(
 agentRouter.get(
     "/agents/earnings",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     deliveryController.getEarnings,
 );
@@ -72,7 +72,7 @@ agentRouter.get(
 agentRouter.post(
     "/orders/:orderId/delivery/assign",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     idempotency({ strict: true }),
     rbac({ resource: "deliveries", action: "assign" }),
     deliveryController.assign,
@@ -81,7 +81,7 @@ agentRouter.post(
 agentRouter.post(
     "/orders/:orderId/delivery/reassign",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     rbac({ resource: "deliveries", action: "assign" }),
     deliveryController.reassign,
 );
@@ -91,7 +91,7 @@ agentRouter.post(
 agentRouter.post(
     "/orders/:orderId/delivery/accept",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     deliveryController.accept,
 );
@@ -99,7 +99,7 @@ agentRouter.post(
 agentRouter.post(
     "/orders/:orderId/delivery/decline",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     deliveryController.decline,
 );
@@ -108,7 +108,7 @@ agentRouter.post(
 agentRouter.patch(
     "/orders/:orderId/delivery/status",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireAgentRole,
     deliveryController.updateStatus,
 );

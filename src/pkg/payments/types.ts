@@ -42,7 +42,7 @@ export interface WebhookEvent {
     eventType: string; // 'pay' | 'capture' | 'refund' | 'partial_refund' | 'void' | 'reject' | 'reversal' | 'idempotency'
     status: "SUCCESS" | "FAILURE" | "PENDING";
     providerOrderId: string; // data.kashierOrderId
-    orderReference: string; // data.orderReference (our merchantOrderId echoed back)
+    orderReference: string; // data.merchantOrderId (our order's public_id, echoed back) — empty for events that don't carry it (e.g. refunds)
     transactionId: string;
     amountMinor: number;
     currency: string;

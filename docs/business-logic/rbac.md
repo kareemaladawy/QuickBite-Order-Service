@@ -56,11 +56,11 @@ If the cache lookup fails AND core-client is down → serve **stale** cache for 
 | Endpoint                                     | Required permission           | Notes                                  |
 | -------------------------------------------- | ----------------------------- | -------------------------------------- |
 | `POST /orders`                               | (customer role)               | Not RBAC — role gate                   |
-| `GET /orders/{id}`                           | (customer role, own order)    | `requireConcreteRegion`; ownership checked in service |
+| `GET /orders/{id}`                           | (customer role, own order)    | `requireRegion`; ownership checked in service |
 | `GET /restaurants/{restId}/branches/{branchId}/orders/{id}` | `orders:read`  | `requireRestaurantMember` + `requireBranchAccess` |
 | `GET /customer/orders`                       | (customer role)               |                                        |
 | `GET /restaurant/orders/{branchId}`          | `orders:read`                 | + `requireBranchAccess`                |
-| `PATCH /orders/{id}/status` cancelled        | (customer role, own order) or admin | `requireConcreteRegion`; ownership checked in service |
+| `PATCH /orders/{id}/status` cancelled        | (customer role, own order) or admin | `requireRegion`; ownership checked in service |
 | `PATCH /restaurants/{restId}/branches/{branchId}/orders/{id}/status` accept/reject | `orders:accept` | `requireRestaurantMember` + `requireBranchAccess` |
 | `PATCH /restaurants/{restId}/branches/{branchId}/orders/{id}/status` preparing/ready | `orders:update` | `requireRestaurantMember` + `requireBranchAccess` |
 | `PATCH /restaurants/{restId}/branches/{branchId}/orders/{id}/status` cancelled | `orders:cancel` | `requireRestaurantMember` + `requireBranchAccess` |

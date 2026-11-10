@@ -1,5 +1,6 @@
 import { inject, injectable } from "tsyringe";
 import type { Knex } from "knex";
+import { validate as isUuid } from "uuid";
 import { container } from "../../../lib/di/container";
 import { TOKENS } from "../../../lib/di/tokens";
 import { db } from "../../../lib/knex/knex";
@@ -9,8 +10,10 @@ import { PaymentProviderRegistry } from "../../../lib/payments/registry";
 import { PaymentSignatureError } from "../../../pkg/payments/errors";
 import { WebhookEvent, WebhookHeaders } from "../../../pkg/payments/types";
 import type { OrderService } from "../../order/service/order.service";
+import type { Order } from "../../order/entity/order.entity";
 import { OrderStatus } from "../../order/enums";
-import { findSessionByProviderSessionId, updatePaymentSession } from "../repository/payment-session.repo";
+import { OrderNotFoundError } from "../../order/errors";
+import { findLatestSessionByOrderId, updatePaymentSession } from "../repository/payment-session.repo";
 import { findProviderByName } from "../repository/payment-provider.repo";
 import {
     createTransaction,
@@ -96,22 +99,6 @@ export class PaymentWebhookService {
     };
 
     private async process(event: WebhookEvent, region: string, providerId: number, trx: Knex.Transaction): Promise<void> {
-        const session = await findSessionByProviderSessionId(event.providerOrderId, trx);
-        if (session) {
-            await updatePaymentSession(
-                session.id,
-                {
-                    status: event.status === "SUCCESS" ? PaymentSessionStatus.CAPTURED : PaymentSessionStatus.FAILED,
-                    rawLastPayload: event.raw,
-                },
-                trx,
-            );
-        } else {
-            logger.warn("webhook: no matching payment_session for provider order id", {
-                providerOrderId: event.providerOrderId,
-            });
-        }
-
         if (CAPTURE_EVENT_TYPES.has(event.eventType)) {
             await this.handleCapture(event, region, providerId, trx);
             return;
@@ -126,7 +113,47 @@ export class PaymentWebhookService {
     }
 
     private async handleCapture(event: WebhookEvent, region: string, providerId: number, trx: Knex.Transaction): Promise<void> {
-        const order = await this.orderService().getOrderForSystem(event.orderReference, region);
+        // orderReference is Kashier echoing back our merchantOrderId (the order's
+        // public_id), but nothing stops a malformed or stale value arriving on the
+        // wire (bad test payloads, a reference for an order that no longer exists).
+        // That's not a transient failure we want Kashier to keep retrying forever —
+        // treat it the same as the "no matching payment_session" case above: log and
+        // ack, don't throw.
+        if (!isUuid(event.orderReference)) {
+            logger.warn("webhook: orderReference is not a valid order id — skipped", {
+                orderReference: event.orderReference,
+                providerOrderId: event.providerOrderId,
+            });
+            return;
+        }
+
+        let order: Order;
+        try {
+            order = await this.orderService().getOrderForSystem(event.orderReference, region);
+        } catch (err) {
+            if (err === OrderNotFoundError) {
+                logger.warn("webhook: no matching order for orderReference — skipped", {
+                    orderReference: event.orderReference,
+                    providerOrderId: event.providerOrderId,
+                });
+                return;
+            }
+            throw err;
+        }
+
+        const session = await findLatestSessionByOrderId(order.id, trx);
+        if (session) {
+            await updatePaymentSession(
+                session.id,
+                {
+                    status: event.status === "SUCCESS" ? PaymentSessionStatus.CAPTURED : PaymentSessionStatus.FAILED,
+                    rawLastPayload: event.raw,
+                },
+                trx,
+            );
+        } else {
+            logger.warn("webhook: no matching payment_session for order", { orderId: order.id });
+        }
 
         const transaction = await createTransaction(
             {

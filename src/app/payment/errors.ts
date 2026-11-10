@@ -17,7 +17,5 @@ export const WebhookMissingRegionError = new AppError("Webhook payload is missin
 export const PaymentSessionNotFoundError = new AppError("Payment session not found for this webhook", 404);
 export const WebhookProcessingFailedError = new AppError("Webhook processing failed", 500);
 export const MissingIdempotencyKeyError = new AppError("Missing Idempotency-Key header", 400);
-
-export function paymentProviderUpstreamError(message: string): AppError {
-    return new AppError(`Payment provider error: ${message}`, 502);
-}
+export const PaymentProviderUpstreamError = new AppError("Payment provider error — please try again", 502);
+export const MissingProviderReferenceError = new AppError("Original charge has no provider order id", 502);

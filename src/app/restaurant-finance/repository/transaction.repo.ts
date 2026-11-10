@@ -15,7 +15,14 @@ import { PayoutRow } from "../types";
 // owns (agents.md §7) — `method` is 'system' for commission since no payment method
 // moved this money, it's a platform-side bookkeeping entry.
 export async function insertCommission(
-    data: { region: string; orderId: number; orderCreatedAt: Date; restaurantId: number; amount: number; currency: string },
+    data: {
+        region: string;
+        orderId: number;
+        orderCreatedAt: Date;
+        restaurantOwnerId: number;
+        amount: number;
+        currency: string;
+    },
     conn: Knex,
 ): Promise<void> {
     await conn("transactions").insert({
@@ -27,7 +34,7 @@ export async function insertCommission(
         status: TransactionStatus.SUCCEEDED,
         amount: data.amount,
         currency: data.currency,
-        src_acc_id: data.restaurantId,
+        src_acc_id: data.restaurantOwnerId,
         dst_acc_id: null,
         created_at: new Date(),
         updated_at: new Date(),
@@ -42,7 +49,7 @@ export async function insertCodCollection(
         orderId: number;
         orderCreatedAt: Date;
         customerId: number;
-        restaurantId: number;
+        restaurantOwnerId: number;
         amount: number;
         currency: string;
     },
@@ -58,7 +65,7 @@ export async function insertCodCollection(
         amount: data.amount,
         currency: data.currency,
         src_acc_id: data.customerId,
-        dst_acc_id: data.restaurantId,
+        dst_acc_id: data.restaurantOwnerId,
         created_at: new Date(),
         updated_at: new Date(),
     });
@@ -67,7 +74,7 @@ export async function insertCodCollection(
 export async function insertPayout(
     data: {
         region: string;
-        restaurantId: number;
+        restaurantOwnerId: number;
         amount: number;
         currency: string;
         providerReferenceId: string;
@@ -87,7 +94,7 @@ export async function insertPayout(
             amount: data.amount,
             currency: data.currency,
             src_acc_id: null,
-            dst_acc_id: data.restaurantId,
+            dst_acc_id: data.restaurantOwnerId,
             provider_reference_id: data.providerReferenceId,
             idempotency_key: data.idempotencyKey,
             created_at: now,
@@ -100,13 +107,13 @@ export async function insertPayout(
 
 // Backed by idx_transactions_dst_acc_type_created_at (restaurant-finance.md §3).
 export async function findPayoutsByRestaurant(
-    restaurantId: number,
+    restaurantOwnerId: number,
     range: { from: Date; to: Date },
     pagination: PaginationParams,
     conn: Knex,
 ): Promise<PayoutRow[]> {
     let query = conn("transactions")
-        .where("dst_acc_id", restaurantId)
+        .where("dst_acc_id", restaurantOwnerId)
         .where("transaction_type", TransactionType.PAYOUT)
         .where("created_at", ">=", range.from)
         .where("created_at", "<=", range.to)

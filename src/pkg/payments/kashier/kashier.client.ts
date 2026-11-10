@@ -83,7 +83,10 @@ export class KashierClient implements IPaymentProvider {
             eventType: payload.event,
             status: data.status,
             providerOrderId: data.kashierOrderId,
-            orderReference: data.orderReference,
+            // `data.orderReference` is Kashier's own internal reference, not ours —
+            // `data.merchantOrderId` is the `order` field we sent at session creation
+            // (our order's public_id), which Kashier echoes back verbatim.
+            orderReference: data.merchantOrderId ?? "",
             transactionId: data.transactionId,
             amountMinor: toMinor(data.amount),
             currency: data.currency,

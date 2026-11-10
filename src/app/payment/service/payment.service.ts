@@ -23,13 +23,14 @@ import { PaymentSessionStatus, TransactionMethod, TransactionStatus, Transaction
 import {
     AlreadyRefundedError,
     ForbiddenPaymentAccessError,
+    MissingProviderReferenceError,
     OnlinePaymentUnavailableInRegionError,
     OrderNotPendingPaymentError,
     PaymentNotFoundError,
     PaymentNotRefundableError,
     PaymentProviderDisabledError,
+    PaymentProviderUpstreamError,
     RefundExceedsChargeError,
-    paymentProviderUpstreamError,
 } from "../errors";
 import { RefundRequestDTO } from "../dto/payment.request.dto";
 import { GetPaymentResult, InitPaymentResult, OrderPayloadForPaymentInit } from "../types";
@@ -84,7 +85,13 @@ export class PaymentService {
             });
         } catch (err) {
             if (err instanceof PaymentProviderError && err.statusCode < 500) {
-                throw paymentProviderUpstreamError(err.message);
+                logger.error("payment provider rejected session creation", {
+                    orderId: input.orderId,
+                    statusCode: err.statusCode,
+                    message: err.message,
+                    raw: err.raw,
+                });
+                throw PaymentProviderUpstreamError;
             }
             throw err;
         }
@@ -203,11 +210,10 @@ export class PaymentService {
             // nothing to wait on. See docs/business-logic/payments.md §5.
             const settled = await updateTransaction(refundRow.id, { status: TransactionStatus.SUCCEEDED }, conn);
             await updateTransaction(charge.id, { isRefunded: true, refundedPaymentId: refundRow.id }, conn);
-            // restaurant_balances doesn't exist until Phase 3 — nothing to adjust yet.
             return settled;
         }
 
-        if (!charge.providerReferenceId) throw paymentProviderUpstreamError("original charge has no provider order id");
+        if (!charge.providerReferenceId) throw MissingProviderReferenceError;
         if (charge.providerId === null) throw PaymentProviderDisabledError;
 
         // The charge's own provider_id tells us which client actually took this
@@ -231,7 +237,15 @@ export class PaymentService {
             return refundRow; // stays 'pending' until the refund webhook confirms it
         } catch (err) {
             await updateTransaction(refundRow.id, { status: TransactionStatus.FAILED }, conn);
-            if (err instanceof PaymentProviderError) throw paymentProviderUpstreamError(err.message);
+            if (err instanceof PaymentProviderError) {
+                logger.error("payment provider rejected refund", {
+                    transactionId,
+                    statusCode: err.statusCode,
+                    message: err.message,
+                    raw: err.raw,
+                });
+                throw PaymentProviderUpstreamError;
+            }
             throw err;
         }
     };

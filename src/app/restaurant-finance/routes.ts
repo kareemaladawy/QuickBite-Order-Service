@@ -4,7 +4,7 @@ import { rbac } from "../../lib/auth/rbac";
 import { idempotency } from "../../lib/idempotency/idempotency";
 import { container } from "../../lib/di/container";
 import { TOKENS } from "../../lib/di/tokens";
-import { requireConcreteRegion } from "../../lib/sharding/region-resolver";
+import { requireRegion } from "../../lib/sharding/region-resolver";
 import { FinanceController } from "./controller/finance.controller";
 
 export const financeRouter = Router();
@@ -14,7 +14,7 @@ const financeController = container.resolve<FinanceController>(TOKENS.FinanceCon
 financeRouter.get(
     "/restaurant/balance",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     rbac({ resource: "finance", action: "read" }),
     financeController.getBalance,
 );
@@ -22,7 +22,7 @@ financeRouter.get(
 financeRouter.get(
     "/restaurant/payouts",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     rbac({ resource: "finance", action: "read" }),
     financeController.listPayouts,
 );
@@ -34,7 +34,7 @@ financeRouter.get(
 financeRouter.post(
     "/restaurant/payouts",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     idempotency({ strict: true }),
     rbac({ resource: "finance", action: "payout_create" }),
     financeController.createPayout,

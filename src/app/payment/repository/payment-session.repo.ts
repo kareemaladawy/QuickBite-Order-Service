@@ -82,6 +82,20 @@ export async function findSessionByProviderSessionId(providerSessionId: string, 
     return row ? toEntity(row) : undefined;
 }
 
+// Supports the capture webhook's session-status update. Kashier's webhook carries
+// `kashierOrderId` (the provider's Order id, assigned once a payment attempt is made
+// against the session) — a different id than `provider_session_id` (the Payment
+// Session id from session creation) — so we correlate by our own order_id instead,
+// which we resolve from the webhook's merchantOrderId/orderReference.
+export async function findLatestSessionByOrderId(orderId: number, conn: Knex): Promise<PaymentSession | undefined> {
+    const row = await conn("payment_sessions")
+        .where("order_id", orderId)
+        .orderBy("created_at", "desc")
+        .select(PAYMENT_SESSION_COLUMNS)
+        .first();
+    return row ? toEntity(row) : undefined;
+}
+
 export async function updatePaymentSession(id: number, data: UpdatePaymentSessionInput, conn: Knex): Promise<PaymentSession> {
     const patch: Record<string, unknown> = {
         status: data.status,

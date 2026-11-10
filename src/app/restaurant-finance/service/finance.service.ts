@@ -2,6 +2,7 @@ import { injectable } from "tsyringe";
 import type { Knex } from "knex";
 import { db } from "../../../lib/knex/knex";
 import { getBranch } from "../../../lib/core-client/branch.client";
+import { getRestaurant } from "../../../lib/core-client/restaurant.client";
 import { bpsOfMinor } from "../../../pkg/utils/money";
 import { PaginationParams } from "../../../lib/http/pagination/types";
 import { Order } from "../../order/entity/order.entity";
@@ -25,10 +26,12 @@ export class FinanceService {
         range: DateRange,
         pagination: PaginationParams,
     ): Promise<PayoutRow[]> => {
-        return findPayoutsByRestaurant(restaurantId, range, pagination, db(region));
+        const restaurant = await getRestaurant(restaurantId);
+        return findPayoutsByRestaurant(restaurant.ownerId, range, pagination, db(region));
     };
 
     recordPayout = async (region: string, data: CreatePayoutRequestDTO, idempotencyKey: string): Promise<PayoutRow> => {
+        const restaurant = await getRestaurant(data.restaurantId);
         const conn = db(region);
         const trx = await conn.transaction();
         try {
@@ -38,7 +41,7 @@ export class FinanceService {
             const payout = await insertPayout(
                 {
                     region,
-                    restaurantId: data.restaurantId,
+                    restaurantOwnerId: restaurant.ownerId,
                     amount: data.amount,
                     currency: data.currency,
                     providerReferenceId: data.providerReferenceId,
@@ -62,7 +65,7 @@ export class FinanceService {
     // order row — there is no commission_bps column on `orders`, only the final computed
     // `commission` amount, which the caller persists alongside the status flip.
     recordDeliverySettlement = async (order: Order, trx: Knex.Transaction): Promise<{ commission: number }> => {
-        const branch = await getBranch(order.branchId);
+        const [branch, restaurant] = await Promise.all([getBranch(order.branchId), getRestaurant(order.restaurantId)]);
         const commission = bpsOfMinor(order.subtotal, branch.commissionBps);
         const deltaBalance = order.subtotal - commission;
 
@@ -73,7 +76,7 @@ export class FinanceService {
                     orderId: order.id,
                     orderCreatedAt: order.createdAt,
                     customerId: order.customerId,
-                    restaurantId: order.restaurantId,
+                    restaurantOwnerId: restaurant.ownerId,
                     amount: order.total,
                     currency: order.currency,
                 },
@@ -87,7 +90,7 @@ export class FinanceService {
                     region: order.region,
                     orderId: order.id,
                     orderCreatedAt: order.createdAt,
-                    restaurantId: order.restaurantId,
+                    restaurantOwnerId: restaurant.ownerId,
                     amount: commission,
                     currency: order.currency,
                 },

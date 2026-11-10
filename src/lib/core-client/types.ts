@@ -10,6 +10,11 @@ export interface CoreEnvelope<T> {
     data: T;
 }
 
+export interface InternalRestaurantDTO {
+    id: number;
+    ownerId: number;
+}
+
 export interface InternalBranchDTO {
     id: number;
     region: string;

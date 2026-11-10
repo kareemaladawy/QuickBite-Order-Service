@@ -6,7 +6,7 @@ import { withCache } from "../../lib/cache/withCache";
 import { container } from "../../lib/di/container";
 import { TOKENS } from "../../lib/di/tokens";
 import { OrderController } from "./controller/order.controller";
-import { requireConcreteRegion, requireRegion } from "../../lib/sharding/region-resolver";
+import { requireRegion } from "../../lib/sharding/region-resolver";
 
 export const orderRouter = Router();
 
@@ -26,7 +26,7 @@ orderRouter.post(
 orderRouter.get(
     "/orders/:orderId",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     orderController.getOrder,
 );
 
@@ -37,7 +37,7 @@ orderRouter.get(
 orderRouter.get(
     "/restaurants/:restaurantId/branches/:branchId/orders/:orderId",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireRestaurantMember("restaurantId"),
     requireBranchAccess("branchId"),
     orderController.getRestaurantOrder,
@@ -51,7 +51,7 @@ orderRouter.get(
 orderRouter.patch(
     "/orders/:orderId/status",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     orderController.updateStatus,
 );
 
@@ -63,7 +63,7 @@ orderRouter.patch(
 orderRouter.patch(
     "/restaurants/:restaurantId/branches/:branchId/orders/:orderId/status",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireRestaurantMember("restaurantId"),
     requireBranchAccess("branchId"),
     orderController.updateRestaurantOrderStatus,
@@ -72,7 +72,7 @@ orderRouter.patch(
 orderRouter.get(
     "/customer/orders",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     orderController.listCustomerOrders,
 );
 
@@ -83,7 +83,7 @@ orderRouter.get(
 orderRouter.get(
     "/restaurants/:restaurantId/branches/:branchId/orders",
     authenticate,
-    requireConcreteRegion,
+    requireRegion,
     requireRestaurantMember("restaurantId"),
     requireBranchAccess("branchId"),
     withCache(10, false),

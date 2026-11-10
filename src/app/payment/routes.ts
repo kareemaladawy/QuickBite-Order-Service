@@ -32,7 +32,7 @@ paymentRouter.get(
     authenticate,
     requireRegion,
     requireRestaurantMember("restaurantId"),
-    rbac({ resource: "payments", action: "read" }),
+    rbac({ resource: "core:payment", action: "read" }),
     paymentController.getById,
 );
 
@@ -41,7 +41,7 @@ paymentRouter.post(
     authenticate,
     requireRegion,
     idempotency({ strict: true }),
-    rbac({ resource: "payments", action: "refund" }),
+    rbac({ resource: "core:payment", action: "refund" }),
     paymentController.refund,
 );
 

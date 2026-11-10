@@ -74,7 +74,7 @@ agentRouter.post(
     authenticate,
     requireRegion,
     idempotency({ strict: true }),
-    rbac({ resource: "deliveries", action: "assign" }),
+    rbac({ resource: "core:delivery", action: "assign" }),
     deliveryController.assign,
 );
 
@@ -82,7 +82,7 @@ agentRouter.post(
     "/orders/:orderId/delivery/reassign",
     authenticate,
     requireRegion,
-    rbac({ resource: "deliveries", action: "assign" }),
+    rbac({ resource: "core:delivery", action: "assign" }),
     deliveryController.reassign,
 );
 

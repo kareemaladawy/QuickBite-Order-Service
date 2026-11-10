@@ -15,7 +15,7 @@ financeRouter.get(
     "/restaurant/balance",
     authenticate,
     requireRegion,
-    rbac({ resource: "finance", action: "read" }),
+    rbac({ resource: "core:finance", action: "read" }),
     financeController.getBalance,
 );
 
@@ -23,7 +23,7 @@ financeRouter.get(
     "/restaurant/payouts",
     authenticate,
     requireRegion,
-    rbac({ resource: "finance", action: "read" }),
+    rbac({ resource: "core:finance", action: "read" }),
     financeController.listPayouts,
 );
 
@@ -36,6 +36,6 @@ financeRouter.post(
     authenticate,
     requireRegion,
     idempotency({ strict: true }),
-    rbac({ resource: "finance", action: "payout_create" }),
+    rbac({ resource: "core:finance", action: "payout_create" }),
     financeController.createPayout,
 );

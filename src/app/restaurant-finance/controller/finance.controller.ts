@@ -8,10 +8,12 @@ import { validateBody } from "../../../lib/validation/validate";
 import { addMs, toMs } from "../../../pkg/utils/time";
 import { FinanceService } from "../service/finance.service";
 import { CreatePayoutRequestDTO } from "../dto/finance.request.dto";
-import { PayoutResponseDTO, RestaurantBalanceResponseDTO } from "../dto/finance.response.dto";
+import { PayoutResponseDTO, RestaurantBalanceResponseDTO, RestaurantLedgerEntryResponseDTO } from "../dto/finance.response.dto";
 import { MissingIdempotencyKeyError } from "../errors";
 
 const DEFAULT_PAYOUT_LOOKBACK_DAYS = 90;
+const DEFAULT_LEDGER_LOOKBACK_DAYS = 90;
+const DEFAULT_CURRENCY = "EGP";
 
 @injectable()
 export class FinanceController {
@@ -23,6 +25,26 @@ export class FinanceController {
             const balances = await this.financeService.getBalance(restaurantId, req.region!);
 
             sendSuccess(res, RestaurantBalanceResponseDTO.from(restaurantId, balances));
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    listLedger = async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const restaurantId = Number(req.user!.restaurantId);
+            const currency = typeof req.query.currency === "string" ? req.query.currency : DEFAULT_CURRENCY;
+            const from =
+                typeof req.query.from === "string" ? new Date(req.query.from) : addMs(new Date(), -toMs(DEFAULT_LEDGER_LOOKBACK_DAYS, "d"));
+            const to = typeof req.query.to === "string" ? new Date(req.query.to) : new Date();
+
+            const pagination = parsePaginationQuery(req.query as Record<string, unknown>, ["createdAt"]);
+            const { entries, orderPublicIdById } = await this.financeService.listLedger(
+                restaurantId, req.region!, currency, { from, to }, pagination,
+            );
+            const { data, meta } = buildPaginationResult(entries, pagination.limit, pagination.sortBy);
+
+            sendPaginated(res, data.map((e) => RestaurantLedgerEntryResponseDTO.from(e, orderPublicIdById)), meta);
         } catch (error) {
             next(error);
         }

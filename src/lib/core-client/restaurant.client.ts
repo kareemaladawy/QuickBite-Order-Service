@@ -16,9 +16,10 @@ export async function invalidateRestaurant(restaurantId: number): Promise<void> 
     await cacheProvider.del(restaurantCacheKey(restaurantId));
 }
 
-// Read-through cache — `transactions.src_acc_id`/`dst_acc_id` are the restaurant's
-// *owner* account id, never the restaurant_id itself (restaurant-finance.md §7), so any
-// ledger write keyed off a restaurantId must resolve the owner through this first.
+// Read-through cache. Note: the treasury/account ledgers (app/payment,
+// app/restaurant-finance) key everything off `restaurantId` directly, never
+// `ownerId` — `ownerId` here is only for callers that need the owning user's id for
+// something outside the ledger (e.g. notifications).
 export async function getRestaurant(restaurantId: number, correlationId?: string): Promise<InternalRestaurantDTO> {
     const key = restaurantCacheKey(restaurantId);
     const cached = await cacheProvider.get(key);

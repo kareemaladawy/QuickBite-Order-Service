@@ -151,11 +151,11 @@ export async function findStalePendingPaymentOrders(cutoff: Date, conn: Knex, li
         .where("orders.status", OrderStatus.PENDING_PAYMENT)
         .where("orders.created_at", "<", cutoff)
         .whereNotExists(
-            conn("transactions")
+            conn("treasury_ledger")
                 .select(1)
-                .whereRaw("transactions.order_id = orders.id")
-                .whereIn("transactions.transaction_type", ["charge", "cod_collection"])
-                .where("transactions.status", "succeeded"),
+                .whereRaw("treasury_ledger.order_id = orders.id")
+                .whereIn("treasury_ledger.entry_type", ["charge", "cod_collection"])
+                .where("treasury_ledger.status", "succeeded"),
         )
         .orderBy("orders.created_at", "asc")
         .limit(limit)

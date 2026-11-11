@@ -9,11 +9,13 @@ import { TOKENS } from "../../lib/di/tokens";
 import { requireRegion } from "../../lib/sharding/region-resolver";
 import { PresenceController } from "./controller/presence.controller";
 import { DeliveryController } from "./controller/delivery.controller";
+import { AgentFinanceController } from "./controller/agent-finance.controller";
 
 export const agentRouter = Router();
 
 const presenceController = container.resolve<PresenceController>(TOKENS.PresenceController);
 const deliveryController = container.resolve<DeliveryController>(TOKENS.DeliveryController);
+const agentFinanceController = container.resolve<AgentFinanceController>(TOKENS.AgentFinanceController);
 
 // Agents are not RBAC-permissioned for their own endpoints (agents.md §13) — just a
 // role gate; ownership (which order/offer a given agent may act on) is a service-layer
@@ -111,4 +113,31 @@ agentRouter.patch(
     requireRegion,
     requireAgentRole,
     deliveryController.updateStatus,
+);
+
+agentRouter.get(
+    "/agents/balance",
+    authenticate,
+    requireRegion,
+    requireAgentRole,
+    agentFinanceController.getBalance,
+);
+
+agentRouter.get(
+    "/agents/payouts",
+    authenticate,
+    requireRegion,
+    requireAgentRole,
+    agentFinanceController.listPayouts,
+);
+
+// Admin only — mirrors restaurant-finance's POST /restaurant/payouts exactly (no
+// non-admin role is mapped to this permission, same admin-bypass pattern as there).
+agentRouter.post(
+    "/agents/payouts",
+    authenticate,
+    requireRegion,
+    idempotency({ strict: true }),
+    rbac({ resource: "core:agent-finance", action: "payout_create" }),
+    agentFinanceController.createPayout,
 );

@@ -14,3 +14,5 @@ export const AssignmentRequiresAgentIdError = new AppError(
     "agentId is required for a manual assignment — use POST .../reassign to re-run the broadcast",
     400,
 );
+export const InsufficientBalanceError = new AppError("Insufficient balance for this payout", 409);
+export const MissingIdempotencyKeyError = new AppError("Missing Idempotency-Key header", 400);

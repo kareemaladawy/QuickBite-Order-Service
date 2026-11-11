@@ -1,6 +1,8 @@
 import { Order } from "../../order/entity/order.entity";
 import { OrderStatus, PaymentMethod } from "../../order/enums";
-import { AgentEarning } from "../entity/agent-earning.entity";
+import { AgentBalance } from "../entity/agent-balance.entity";
+import { AgentLedgerEntry } from "../entity/agent-ledger-entry.entity";
+import { PayoutRow } from "../types";
 import { env } from "../../../lib/config/env";
 
 export class DeliveryTaskResponseDTO {
@@ -69,11 +71,13 @@ export class AgentEarningsResponseDTO {
     items!: EarningItemResponseDTO[];
     nextCursor!: string | null;
 
+    // `earnings` are agent_ledger rows filtered to entry_type = 'earning_credit' —
+    // earnedAt in the response maps to the ledger row's createdAt.
     static from(
         range: { from: Date; to: Date },
         totals: { count: number; sum: number },
         currency: string,
-        earnings: AgentEarning[],
+        earnings: AgentLedgerEntry[],
         orderPublicIdById: Map<number, string>,
         nextCursor: string | null,
     ): AgentEarningsResponseDTO {
@@ -81,12 +85,46 @@ export class AgentEarningsResponseDTO {
         dto.range = { from: range.from.toISOString(), to: range.to.toISOString() };
         dto.totals = { count: totals.count, sum: totals.sum, currency };
         dto.items = earnings.map((e) => ({
-            orderPublicId: orderPublicIdById.get(e.orderId) ?? "",
+            orderPublicId: e.orderId !== null ? orderPublicIdById.get(e.orderId) ?? "" : "",
             amount: e.amount,
             currency: e.currency,
-            earnedAt: e.earnedAt.toISOString(),
+            earnedAt: e.createdAt.toISOString(),
         }));
         dto.nextCursor = nextCursor;
+        return dto;
+    }
+}
+
+export class AgentBalanceResponseDTO {
+    agentId!: number;
+    balances!: Array<{ currency: string; balance: number }>;
+    asOf!: string;
+
+    static from(agentId: number, balances: AgentBalance[]): AgentBalanceResponseDTO {
+        const dto = new AgentBalanceResponseDTO();
+        dto.agentId = agentId;
+        dto.balances = balances.map((b) => ({ currency: b.currency, balance: b.balance }));
+        dto.asOf = new Date().toISOString();
+        return dto;
+    }
+}
+
+export class AgentPayoutResponseDTO {
+    id!: string;
+    amount!: number;
+    currency!: string;
+    status!: string;
+    providerReferenceId!: string | null;
+    createdAt!: string;
+
+    static from(payout: PayoutRow): AgentPayoutResponseDTO {
+        const dto = new AgentPayoutResponseDTO();
+        dto.id = String(payout.id);
+        dto.amount = payout.amount;
+        dto.currency = payout.currency;
+        dto.status = payout.status;
+        dto.providerReferenceId = payout.providerReferenceId;
+        dto.createdAt = payout.createdAt.toISOString();
         return dto;
     }
 }

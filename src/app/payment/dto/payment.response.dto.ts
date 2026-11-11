@@ -1,10 +1,7 @@
-import { Transaction } from "../entity/transaction.entity";
+import { TreasuryLedgerEntry } from "../entity/treasury-ledger-entry.entity";
 import { InitPaymentResult } from "../types";
-import { PaymentProviderId, PaymentProviderName, TransactionMethod, TransactionStatus, TransactionType } from "../enums";
+import { PaymentProviderId, PaymentProviderName, TreasuryEntryType, TreasuryMethod, TreasuryStatus } from "../enums";
 
-// Stays a pure, DB-free DTO mapper. COD has no entry here — it's a payment method
-// (tx.method), not a provider, and its transactions carry providerId: null. A new
-// seeded provider adds one more entry here.
 const PROVIDER_NAME_BY_ID: Partial<Record<PaymentProviderId, PaymentProviderName>> = {
     [PaymentProviderId.KASHIER]: PaymentProviderName.KASHIER,
 };
@@ -17,20 +14,19 @@ function providerName(providerId: number | null): PaymentProviderName | null {
 export class RefundSummaryDTO {
     id!: string;
     amount!: number;
-    status!: TransactionStatus;
+    status!: TreasuryStatus;
     createdAt!: string;
 
-    static from(tx: Transaction): RefundSummaryDTO {
+    static from(entry: TreasuryLedgerEntry): RefundSummaryDTO {
         const dto = new RefundSummaryDTO();
-        dto.id = String(tx.id);
-        dto.amount = tx.amount;
-        dto.status = tx.status;
-        dto.createdAt = tx.createdAt.toISOString();
+        dto.id = String(entry.id);
+        dto.amount = entry.amount;
+        dto.status = entry.status;
+        dto.createdAt = entry.createdAt.toISOString();
         return dto;
     }
 }
 
-// POST /orders (online) response fragment + POST /payments/init response.
 export class PaymentInitResponseDTO {
     redirectUrl!: string;
     sessionId!: string;
@@ -45,15 +41,13 @@ export class PaymentInitResponseDTO {
     }
 }
 
-// GET /payments/{id} and POST /payments/{id}/refund response — a "payment" in the
-// public API is a transactions row (see docs/business-logic/payments.md §1).
 export class PaymentResponseDTO {
     id!: string;
     orderId!: string | null;
-    type!: TransactionType;
-    method!: TransactionMethod;
+    type!: TreasuryEntryType;
+    method!: TreasuryMethod;
     provider!: PaymentProviderName | null;
-    status!: TransactionStatus;
+    status!: TreasuryStatus;
     amount!: number;
     currency!: string;
     providerReferenceId!: string | null;
@@ -62,20 +56,20 @@ export class PaymentResponseDTO {
     updatedAt!: string;
     refunds!: RefundSummaryDTO[];
 
-    static from(tx: Transaction, orderPublicId: string | null, refunds: Transaction[] = []): PaymentResponseDTO {
+    static from(entry: TreasuryLedgerEntry, orderPublicId: string | null, refunds: TreasuryLedgerEntry[] = []): PaymentResponseDTO {
         const dto = new PaymentResponseDTO();
-        dto.id = String(tx.id);
+        dto.id = String(entry.id);
         dto.orderId = orderPublicId;
-        dto.type = tx.transactionType;
-        dto.method = tx.method;
-        dto.provider = providerName(tx.providerId);
-        dto.status = tx.status;
-        dto.amount = tx.amount;
-        dto.currency = tx.currency;
-        dto.providerReferenceId = tx.providerReferenceId;
-        dto.isRefunded = tx.isRefunded;
-        dto.createdAt = tx.createdAt.toISOString();
-        dto.updatedAt = tx.updatedAt.toISOString();
+        dto.type = entry.entryType;
+        dto.method = entry.method;
+        dto.provider = providerName(entry.providerId);
+        dto.status = entry.status;
+        dto.amount = entry.amount;
+        dto.currency = entry.currency;
+        dto.providerReferenceId = entry.providerReferenceId;
+        dto.isRefunded = entry.isRefunded;
+        dto.createdAt = entry.createdAt.toISOString();
+        dto.updatedAt = entry.updatedAt.toISOString();
         dto.refunds = refunds.map(RefundSummaryDTO.from);
         return dto;
     }

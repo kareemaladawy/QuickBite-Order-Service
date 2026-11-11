@@ -24,8 +24,10 @@ export const TOKENS = {
     PresenceService: Symbol.for("PresenceService"),
     AssignmentService: Symbol.for("AssignmentService"),
     DeliveryService: Symbol.for("DeliveryService"),
+    AgentFinanceService: Symbol.for("AgentFinanceService"),
     PresenceController: Symbol.for("PresenceController"),
     DeliveryController: Symbol.for("DeliveryController"),
+    AgentFinanceController: Symbol.for("AgentFinanceController"),
 
     // restaurant-finance module
     FinanceService: Symbol.for("FinanceService"),

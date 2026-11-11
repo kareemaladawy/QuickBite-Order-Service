@@ -14,8 +14,8 @@ import { FindOrdersByAgentFilters } from "../../order/types";
 import type { FinanceService } from "../../restaurant-finance/service/finance.service";
 import { AssignmentService } from "./assignment.service";
 import { PresenceService } from "./presence.service";
-import { insertEarning, findByAgent, sumByAgent } from "../repository/agent-earning.repo";
-import { AgentEarning } from "../entity/agent-earning.entity";
+import type { AgentFinanceService } from "./agent-finance.service";
+import { AgentLedgerEntry } from "../entity/agent-ledger-entry.entity";
 import { AssignmentRequiresAgentIdError, ForbiddenDeliveryAccessError } from "../errors";
 import { EarningsRange } from "../types";
 
@@ -34,6 +34,10 @@ export class DeliveryService {
 
     private financeService(): FinanceService {
         return container.resolve<FinanceService>(TOKENS.FinanceService);
+    }
+
+    private agentFinanceService(): AgentFinanceService {
+        return container.resolve<AgentFinanceService>(TOKENS.AgentFinanceService);
     }
 
     // POST /orders/{id}/delivery/assign — admin manual override only (agentId
@@ -88,17 +92,7 @@ export class DeliveryService {
             updated = await this.orderService().transitionByAgent(order, OrderStatus.DELIVERED, trx, { commission });
 
             const amount = Math.floor((order.deliveryFee * env.agents.earningsSharePct) / 100);
-            await insertEarning(
-                {
-                    region: order.region,
-                    agentId,
-                    orderId: order.id,
-                    orderCreatedAt: order.createdAt,
-                    amount,
-                    currency: order.currency,
-                },
-                trx,
-            );
+            await this.agentFinanceService().recordEarning(agentId, order.region, order.id, order.createdAt, amount, order.currency, trx);
 
             await trx.commit();
         } catch (err) {
@@ -141,20 +135,8 @@ export class DeliveryService {
         region: string,
         range: EarningsRange,
         pagination: PaginationParams,
-    ): Promise<{ earnings: AgentEarning[]; totals: { count: number; sum: number }; orderPublicIdById: Map<number, string> }> => {
-        const conn = db(region);
-        const [earnings, totals] = await Promise.all([
-            findByAgent(agentId, range, pagination, conn),
-            sumByAgent(agentId, range, conn),
-        ]);
-
-        const orders = earnings.length > 0 ? await this.orderService().getOrdersByCompositeIds(
-            earnings.map((e) => ({ id: e.orderId, createdAt: e.orderCreatedAt })),
-            region,
-        ) : [];
-        const orderPublicIdById = new Map(orders.map((o) => [o.id, o.publicId]));
-
-        return { earnings, totals, orderPublicIdById };
+    ): Promise<{ earnings: AgentLedgerEntry[]; totals: { count: number; sum: number }; orderPublicIdById: Map<number, string> }> => {
+        return this.agentFinanceService().getEarnings(agentId, region, range, pagination);
     };
 
     private publishStatusChanged = async (order: Order, agentId: number): Promise<void> => {

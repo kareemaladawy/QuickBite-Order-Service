@@ -27,6 +27,14 @@ financeRouter.get(
     financeController.listPayouts,
 );
 
+financeRouter.get(
+    "/restaurant/ledger",
+    authenticate,
+    requireRegion,
+    rbac({ resource: "core:finance", action: "read" }),
+    financeController.listLedger,
+);
+
 // system_admin only — finance:payout_create is admin-bypassed today (rbac.md §1), not
 // mapped to any non-admin role, so rbac()'s normal "restaurant_user with the permission"
 // branch never actually grants this to anyone but matches the pattern used by

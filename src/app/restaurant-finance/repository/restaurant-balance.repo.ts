@@ -28,7 +28,8 @@ export async function findBalance(restaurantId: number, currency: string, conn: 
 
 // Atomic credit (order `delivered` settlement) via an upsert rather than a separate
 // SELECT ... FOR UPDATE + UPDATE — a single statement that's correct under concurrency
-// by construction (restaurant-finance.md §3 note on locking is satisfied either way).
+// by construction, and RETURNING gives the caller the exact balance_after to snapshot
+// on the account-ledger row it inserts right after this, in the same trx.
 export async function creditBalance(
     restaurantId: number,
     region: string,
@@ -63,4 +64,20 @@ export async function debitIfSufficient(
         .update({ balance: conn.raw("balance - ?", [amountMinor]), updated_at: new Date() })
         .returning(RESTAURANT_BALANCE_COLUMNS);
     return row ? toEntity(row) : undefined;
+}
+
+// Unconditional debit — used for commission (which never left balance available to
+// race against, it's computed in the same trx as the settlement credit) and for the
+// refund clawback, where the balance is allowed to go negative (the restaurant now
+// owes the platform, recovered from its next payout). Upsert for the same reason as
+// creditBalance: a commission/clawback debit can be the very first row for a
+// restaurant/currency pair (e.g. a refund clawback before any payout has ever run).
+export async function debitUnconditional(
+    restaurantId: number,
+    region: string,
+    currency: string,
+    amountMinor: number,
+    conn: Knex,
+): Promise<RestaurantBalance> {
+    return creditBalance(restaurantId, region, currency, -amountMinor, conn);
 }

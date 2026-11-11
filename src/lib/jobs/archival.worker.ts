@@ -26,11 +26,28 @@ import { ArchivalTableConfig } from "./types";
 //     child can't reference an `orders` row that isn't in archive yet), so this list
 //     is walked in reverse for the insert phase (see runArchivalWorker).
 const ARCHIVAL_TABLES: ArchivalTableConfig[] = [
+    // restaurant_ledger/agent_ledger FK into both `orders` and `treasury_ledger`, so
+    // they must be deleted before treasury_ledger as well as before orders — listed
+    // first here. restaurant_balances/agent_balances are current running state, not
+    // history, and are deliberately never archived.
     {
-        name: "agent_earnings",
-        dateColumn: "earned_at",
+        name: "restaurant_ledger",
+        dateColumn: "created_at",
         pkColumns: ["id"],
-        columns: ["id", "region", "agent_id", "order_id", "order_created_at", "amount", "currency", "earned_at"],
+        columns: [
+            "id", "region", "restaurant_id", "currency", "entry_type", "amount", "balance_after",
+            "order_id", "order_created_at", "treasury_ledger_id", "note", "created_at",
+        ],
+        identityPk: false,
+    },
+    {
+        name: "agent_ledger",
+        dateColumn: "created_at",
+        pkColumns: ["id"],
+        columns: [
+            "id", "region", "agent_id", "currency", "entry_type", "amount", "balance_after",
+            "order_id", "order_created_at", "treasury_ledger_id", "note", "created_at",
+        ],
         identityPk: false,
     },
     {
@@ -55,14 +72,14 @@ const ARCHIVAL_TABLES: ArchivalTableConfig[] = [
         identityPk: false,
     },
     {
-        name: "transactions",
+        name: "treasury_ledger",
         dateColumn: "created_at",
         pkColumns: ["id"],
         columns: [
-            "id", "region", "order_id", "order_created_at", "transaction_type", "method",
+            "id", "region", "order_id", "order_created_at", "entry_type", "method",
             "provider_id", "provider_reference_id", "status", "amount", "currency",
-            "src_acc_id", "dst_acc_id", "is_refunded", "refunded_payment_id",
-            "idempotency_key", "created_at", "updated_at",
+            "customer_id", "payee_account_type", "payee_account_id", "is_refunded",
+            "refunded_entry_id", "idempotency_key", "created_at", "updated_at",
         ],
         identityPk: false,
     },

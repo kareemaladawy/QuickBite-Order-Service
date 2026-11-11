@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, Min, MaxLength } from "class-validator";
+import { IsEnum, IsIn, IsInt, IsNumber, IsOptional, IsString, Min, MaxLength, MinLength } from "class-validator";
 
 export class PresenceOnlineRequestDTO {
     @IsNumber()
@@ -28,4 +28,31 @@ export class UpdateDeliveryStatusRequestDTO {
     @IsString()
     @MaxLength(500)
     reason?: string;
+}
+
+// Mirrors restaurant-finance's CreatePayoutRequestDTO — same payout shape, agent-keyed.
+enum PayoutCurrency {
+    EGP = "EGP",
+    SAR = "SAR",
+}
+
+export class CreatePayoutRequestDTO {
+    @IsInt()
+    @Min(1)
+    agentId!: number;
+
+    @IsInt()
+    @Min(1)
+    amount!: number;
+
+    @IsEnum(PayoutCurrency)
+    currency!: PayoutCurrency;
+
+    @IsString()
+    @MinLength(1)
+    providerReferenceId!: string;
+
+    @IsOptional()
+    @IsString()
+    note?: string;
 }

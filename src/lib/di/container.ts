@@ -20,8 +20,10 @@ import {WebhookController} from "../../app/payment/controller/webhook.controller
 import {PresenceService} from "../../app/agent/service/presence.service";
 import {AssignmentService} from "../../app/agent/service/assignment.service";
 import {DeliveryService} from "../../app/agent/service/delivery.service";
+import {AgentFinanceService} from "../../app/agent/service/agent-finance.service";
 import {PresenceController} from "../../app/agent/controller/presence.controller";
 import {DeliveryController} from "../../app/agent/controller/delivery.controller";
+import {AgentFinanceController} from "../../app/agent/controller/agent-finance.controller";
 import {FinanceService} from "../../app/restaurant-finance/service/finance.service";
 import {FinanceController} from "../../app/restaurant-finance/controller/finance.controller";
 
@@ -51,8 +53,10 @@ container.registerSingleton(TOKENS.WebhookController, WebhookController);
 container.registerSingleton(TOKENS.PresenceService, PresenceService);
 container.registerSingleton(TOKENS.AssignmentService, AssignmentService);
 container.registerSingleton(TOKENS.DeliveryService, DeliveryService);
+container.registerSingleton(TOKENS.AgentFinanceService, AgentFinanceService);
 container.registerSingleton(TOKENS.PresenceController, PresenceController);
 container.registerSingleton(TOKENS.DeliveryController, DeliveryController);
+container.registerSingleton(TOKENS.AgentFinanceController, AgentFinanceController);
 
 // Restaurant-finance module
 container.registerSingleton(TOKENS.FinanceService, FinanceService);

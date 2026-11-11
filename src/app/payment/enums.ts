@@ -1,13 +1,10 @@
-// COD is a payment *method* (see TransactionMethod.COD below), not a payment
+// COD is a payment *method* (see TreasuryMethod.COD below), not a payment
 // provider — it has no gateway, no session, no webhook, and no row in
 // payment_providers. Only real payment gateways belong here.
 export enum PaymentProviderName {
     KASHIER = "kashier",
 }
 
-// Matches the seed in 20260418000010_create_payment_providers.ts — hardcoded rather
-// than read through on every hot-path write; the table itself exists for the
-// is_enabled kill-switch (checked in PaymentService.init) and future admin tooling.
 export enum PaymentProviderId {
     KASHIER = 1,
 }
@@ -22,25 +19,32 @@ export enum PaymentSessionStatus {
     CANCELLED = "cancelled",
 }
 
-export enum TransactionType {
+// Treasury ledger — one row per real-world money event. Commission and other
+// internal-accounting-only concepts live in the account ledgers instead (see
+// restaurant-finance/agent enums.ts), never here.
+export enum TreasuryEntryType {
     CHARGE = "charge",
     REFUND = "refund",
-    COMMISSION = "commission",
     PAYOUT = "payout",
     COD_COLLECTION = "cod_collection",
-    ADJUSTMENT = "adjustment",
 }
 
-export enum TransactionMethod {
+export enum TreasuryMethod {
     ONLINE = "online",
     COD = "cod",
     BANK_TRANSFER = "bank_transfer",
-    SYSTEM = "system",
 }
 
-export enum TransactionStatus {
+export enum TreasuryStatus {
     PENDING = "pending",
     SUCCEEDED = "succeeded",
     FAILED = "failed",
     REVERSED = "reversed",
+}
+
+// Who a payout treasury entry was paid out to — resolves straight to
+// `restaurants.id` / `agents.id`, never a core.users id (see types.ts note).
+export enum PayeeAccountType {
+    RESTAURANT = "restaurant",
+    AGENT = "agent",
 }

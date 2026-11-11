@@ -170,17 +170,19 @@ async function cleanCore(c: Client): Promise<void> {
 
 async function cleanOrderShard(c: Client, region: string): Promise<void> {
     console.log(`[order/${region}] truncating order tables`);
-    // payment_providers + restaurant_balances are tiny lookups/aggregates;
+    // payment_providers + restaurant_balances/agent_balances are tiny lookups/aggregates;
     // we wipe them too so a fresh seed cycle is fully deterministic.
     await c.query(`
         TRUNCATE TABLE
-            agent_earnings,
-            transactions,
+            agent_ledger,
+            restaurant_ledger,
+            treasury_ledger,
             payment_webhook_events,
             payment_sessions,
             order_items,
             orders,
             restaurant_balances,
+            agent_balances,
             events_outbox,
             payment_providers
         RESTART IDENTITY CASCADE;

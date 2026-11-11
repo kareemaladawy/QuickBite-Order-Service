@@ -1,4 +1,6 @@
 import { RestaurantBalance } from "../entity/restaurant-balance.entity";
+import { RestaurantLedgerEntry } from "../entity/restaurant-ledger-entry.entity";
+import { RestaurantLedgerEntryType } from "../enums";
 import { PayoutRow } from "../types";
 
 export class RestaurantBalanceResponseDTO {
@@ -31,6 +33,30 @@ export class PayoutResponseDTO {
         dto.status = payout.status;
         dto.providerReferenceId = payout.providerReferenceId;
         dto.createdAt = payout.createdAt.toISOString();
+        return dto;
+    }
+}
+
+export class RestaurantLedgerEntryResponseDTO {
+    id!: string;
+    entryType!: RestaurantLedgerEntryType;
+    amount!: number;
+    balanceAfter!: number;
+    currency!: string;
+    orderId!: string | null;
+    note!: string | null;
+    createdAt!: string;
+
+    static from(entry: RestaurantLedgerEntry, orderPublicIdById: Map<number, string>): RestaurantLedgerEntryResponseDTO {
+        const dto = new RestaurantLedgerEntryResponseDTO();
+        dto.id = String(entry.id);
+        dto.entryType = entry.entryType;
+        dto.amount = entry.amount;
+        dto.balanceAfter = entry.balanceAfter;
+        dto.currency = entry.currency;
+        dto.orderId = entry.orderId !== null ? orderPublicIdById.get(entry.orderId) ?? null : null;
+        dto.note = entry.note;
+        dto.createdAt = entry.createdAt.toISOString();
         return dto;
     }
 }

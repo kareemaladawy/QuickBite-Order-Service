@@ -1,41 +1,43 @@
-import { TransactionMethod, TransactionStatus, TransactionType } from "../enums";
+import { PayeeAccountType, TreasuryEntryType, TreasuryMethod, TreasuryStatus } from "../enums";
 
-export class Transaction {
+export class TreasuryLedgerEntry {
     id: number;
     region: string;
     orderId: number | null;
     orderCreatedAt: Date | null;
-    transactionType: TransactionType;
-    method: TransactionMethod;
+    entryType: TreasuryEntryType;
+    method: TreasuryMethod;
     providerId: number | null;
     providerReferenceId: string | null;
-    status: TransactionStatus;
+    status: TreasuryStatus;
     amount: number;
     currency: string;
-    srcAccId: number | null;
-    dstAccId: number | null;
+    customerId: number | null;
+    payeeAccountType: PayeeAccountType | null;
+    payeeAccountId: number | null;
     isRefunded: boolean;
-    refundedPaymentId: number | null;
+    refundedEntryId: number | null;
     idempotencyKey: string | null;
     createdAt: Date;
     updatedAt: Date;
 
-    constructor(data: Partial<Transaction>) {
+    constructor(data: Partial<TreasuryLedgerEntry>) {
         this.id = data.id!;
         this.region = data.region!;
         this.orderId = data.orderId ?? null;
         this.orderCreatedAt = data.orderCreatedAt ?? null;
-        this.transactionType = data.transactionType!;
+        this.entryType = data.entryType!;
         this.method = data.method!;
         this.providerId = data.providerId ?? null;
         this.providerReferenceId = data.providerReferenceId ?? null;
         this.status = data.status!;
         this.amount = data.amount!;
         this.currency = data.currency!;
-        this.srcAccId = data.srcAccId ?? null;
-        this.dstAccId = data.dstAccId ?? null;
+        this.customerId = data.customerId ?? null;
+        this.payeeAccountType = data.payeeAccountType ?? null;
+        this.payeeAccountId = data.payeeAccountId ?? null;
         this.isRefunded = data.isRefunded ?? false;
-        this.refundedPaymentId = data.refundedPaymentId ?? null;
+        this.refundedEntryId = data.refundedEntryId ?? null;
         this.idempotencyKey = data.idempotencyKey ?? null;
         this.createdAt = data.createdAt!;
         this.updatedAt = data.updatedAt!;

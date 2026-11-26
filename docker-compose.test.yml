@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: order_service_eg_test
+    volumes:
+      - ./scripts/test/init-multiple-dbs.sql:/docker-entrypoint-initdb.d/init-multiple-dbs.sql:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d order_service_eg_test" ]
+      interval: 10s
+      retries: 5
+      timeout: 30s
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      retries: 5
+      timeout: 30s
+
+  # testing container
+  test:
+    image: node:22-bookworm-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      ACCESS_SECRET: test-access-secret
+      REFRESH_SECRET: test-refresh-secret
+      REGIONS: eg
+
+      DB_eg_HOST: postgres
+      DB_eg_PORT: "5432"
+      DB_eg_USERNAME: postgres
+      DB_eg_PASSWORD: root
+      DB_eg_NAME: order_service_eg_test
+
+      ARCHIVE_DB_eg_HOST: postgres
+      ARCHIVE_DB_eg_PORT: "5432"
+      ARCHIVE_DB_eg_USERNAME: postgres
+      ARCHIVE_DB_eg_PASSWORD: root
+      ARCHIVE_DB_eg_NAME: order_service_archive_eg_test
+
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+
+      CORE_SERVICE_BASE_URL: http://core-service:3000
+      CORE_INTERNAL_API_KEY: test
+
+      KASHIER_MERCHANT_ID: test-merchant
+      KASHIER_API_KEY: test
+      KASHIER_SECRET_KEY: test
+      KASHIER_RETURN_URL: https://app.quickbite.test/checkout/return
+
+      ARCHIVAL_BATCH_SIZE: "2"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: sh -e -c "npm ci && npm run build && npm run test && npm run test:integration"

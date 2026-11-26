@@ -1,0 +1,22 @@
+name: CI
+
+on: 
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run test container
+        run: docker compose -f docker-compose.test.yml run --rm test
+
+      - name: Teardown containers
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v

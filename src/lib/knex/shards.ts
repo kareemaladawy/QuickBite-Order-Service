@@ -1,8 +1,8 @@
-import knex, {Knex} from "knex";
-import {env} from "../config/env";
-import {ShardConfig} from "../config/types";
-import {assertRegion} from "../sharding/regions";
-import {Cluster, ShardKnexConfig} from "./types";
+import knex, { Knex } from "knex";
+import { env } from "../config/env";
+import { ShardConfig } from "../config/types";
+import { assertRegion } from "../sharding/regions";
+import { Cluster, ShardKnexConfig } from "./types";
 
 function buildConfig(shard: ShardConfig, region: string): ShardKnexConfig {
     return {
@@ -13,6 +13,7 @@ function buildConfig(shard: ShardConfig, region: string): ShardKnexConfig {
             user: shard.username,
             password: shard.password,
             database: shard.name,
+            ssl: env.isProduction ? { rejectUnauthorized: false } : false
         },
         pool: {
             min: 0,

@@ -25,7 +25,7 @@
  */
 import { Client } from "pg";
 import bcrypt from "bcrypt";
-import { env } from "../src/lib/config/env";
+import { env } from "../lib/config/env";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture
@@ -360,12 +360,9 @@ async function main() {
 
     // 1. Core
     const cc = coreClient();
-    let seedResult: Awaited<ReturnType<typeof seedCore>> | null = null;
-    await withClient(cc, async (c) => {
+    const seedResult: Awaited<ReturnType<typeof seedCore>> | null = await withClient(cc, async (c) => {
         await cleanCore(c);
-        if (!cleanOnly) {
-            seedResult = await seedCore(c);
-        }
+        return cleanOnly ? null : await seedCore(c);
     });
 
     // 2. Order shards (clean → re-partition → tiny seed)

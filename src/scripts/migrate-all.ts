@@ -1,6 +1,6 @@
 import "reflect-metadata";
-import { db, dbArchive, destroyAll } from "../src/lib/knex/knex";
-import { listConfiguredRegions } from "../src/lib/knex/shards";
+import { db, dbArchive, destroyAll } from "../lib/knex/knex";
+import { listConfiguredRegions } from "../lib/knex/shards";
 
 function parseCluster(): "hot" | "archive" {
     const arg = process.argv.find((a) => a.startsWith("--cluster="));

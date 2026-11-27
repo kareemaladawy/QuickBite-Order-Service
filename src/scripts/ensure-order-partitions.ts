@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { env } from "../src/lib/config/env";
-import { db, destroyAll } from "../src/lib/knex/knex";
-import { ensureOrderMonthPartitions } from "../src/lib/knex/partitioning";
+import { env } from "../lib/config/env";
+import { db, destroyAll } from "../lib/knex/knex";
+import { ensureOrderMonthPartitions } from "../lib/knex/partitioning";
 
 // Keeps the next N months of `orders` partitions pre-created, per region. Safe to
 // re-run (idempotent) — run it monthly (ops cron) to keep partitions rolling forward.
